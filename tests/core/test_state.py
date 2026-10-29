@@ -323,7 +323,8 @@ def test_module_has_no_helper_that_records_caller_text() -> None:
     functions = {
         name
         for name, value in vars(core.state).items()
-        if callable(value) and getattr(value, "__module__", None) == "core.state"
+        if callable(value)
+        and getattr(value, "__module__", None) == "core.state"
         and not isinstance(value, type)
     }
     assert functions == {"admit_numbers", "new_call_state"}
