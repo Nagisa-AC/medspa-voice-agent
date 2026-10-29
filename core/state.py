@@ -107,6 +107,7 @@ class CallState:
     # Built by `book` from the booking's intent; never derived from call_id, so a
     # callback after a dropped call collapses to the same key.
     idempotency_keys: set[str] = field(default_factory=set)
+    version: int = field(default=0, init=False)  # advanced only by SessionStore.save
     _escalation: Escalation = field(default_factory=NotEscalated, init=False)
 
     def __post_init__(self) -> None:
@@ -198,12 +199,24 @@ class UnknownCallError(Exception):
     pass
 
 
+class StaleStateError(Exception):
+    """The stored state moved on since this copy was read; re-read and retry."""
+
+
 class SessionStore(Protocol):
-    async def create(self, state: CallState) -> None: ...
+    async def create(self, state: CallState) -> None:
+        """Store a new call at version 0."""
+        ...
 
     async def get(self, call_id: str) -> CallState | None: ...
 
-    async def save(self, state: CallState) -> None: ...
+    async def save(self, state: CallState) -> None:
+        """Compare-and-set: store only if `state.version` matches the stored version.
+
+        On success the stored copy and `state` both move to version + 1; otherwise raise
+        StaleStateError and leave the stored state untouched.
+        """
+        ...
 
     async def delete(self, call_id: str) -> None: ...
 
@@ -217,6 +230,7 @@ class InMemorySessionStore:
     async def create(self, state: CallState) -> None:
         if state.call_id in self._states:
             raise CallExistsError(state.call_id)
+        state.version = 0
         self._states[state.call_id] = copy.deepcopy(state)
 
     async def get(self, call_id: str) -> CallState | None:
@@ -224,8 +238,12 @@ class InMemorySessionStore:
         return None if state is None else copy.deepcopy(state)
 
     async def save(self, state: CallState) -> None:
-        if state.call_id not in self._states:
+        stored = self._states.get(state.call_id)
+        if stored is None:
             raise UnknownCallError(state.call_id)
+        if stored.version != state.version:
+            raise StaleStateError(state.call_id)
+        state.version += 1
         self._states[state.call_id] = copy.deepcopy(state)
 
     async def delete(self, call_id: str) -> None:

@@ -26,6 +26,7 @@ from core.state import (
     NotEscalated,
     NumberKind,
     OfferedSlot,
+    StaleStateError,
     Transfer,
     UnknownCallError,
     admit_numbers,
@@ -303,9 +304,94 @@ async def test_store_mutation_without_save_is_lost() -> None:
     assert again.offered_slots == []
 
 
+def test_version_is_not_a_constructor_argument() -> None:
+    assert "version" not in {f.name for f in dataclasses.fields(CallState) if f.init}
+    assert state().version == 0
+
+
+async def test_create_stores_version_zero() -> None:
+    store = InMemorySessionStore()
+    s = state()
+    s.version = 7
+    await store.create(s)
+    loaded = await store.get("call_1")
+    assert loaded is not None
+    assert (s.version, loaded.version) == (0, 0)
+
+
+async def test_second_save_from_a_stale_copy_is_rejected() -> None:
+    store = InMemorySessionStore()
+    await store.create(state())
+    first = await store.get("call_1")
+    second = await store.get("call_1")
+    assert first is not None and second is not None
+    await store.save(first)
+    with pytest.raises(StaleStateError):
+        await store.save(second)
+    stored = await store.get("call_1")
+    assert stored is not None
+    assert stored.version == 1
+
+
+async def test_stale_save_cannot_erase_a_commit() -> None:
+    store = InMemorySessionStore()
+    await store.create(state())
+    a = await store.get("call_1")
+    b = await store.get("call_1")
+    assert a is not None and b is not None
+    a.record_commit("legal_or_complaint", Transfer(1, "+15555550101"))
+    await store.save(a)
+    b.turn_count += 1
+    with pytest.raises(StaleStateError):
+        await store.save(b)
+    stored = await store.get("call_1")
+    assert stored is not None
+    assert stored.escalation == Committed("legal_or_complaint", Transfer(1, "+15555550101"))
+    assert stored.turn_count == 0
+
+
+async def test_repeated_saves_from_one_object_advance_the_version() -> None:
+    store = InMemorySessionStore()
+    s = state()
+    await store.create(s)
+    await store.save(s)
+    assert s.version == 1
+    s.turn_count = 2
+    await store.save(s)
+    assert s.version == 2
+    stored = await store.get("call_1")
+    assert stored is not None
+    assert (stored.version, stored.turn_count) == (2, 2)
+
+
+async def test_failed_save_leaves_caller_version_unchanged() -> None:
+    store = InMemorySessionStore()
+    await store.create(state())
+    a = await store.get("call_1")
+    b = await store.get("call_1")
+    assert a is not None and b is not None
+    await store.save(a)
+    with pytest.raises(StaleStateError):
+        await store.save(b)
+    assert b.version == 0
+
+
 # --------------------------------------------------------------------------- no decision logic
 
-FIELDS = {f.name for f in dataclasses.fields(CallState) if not f.name.startswith("_")}
+FIELDS = {
+    "call_id",
+    "tenant_id",
+    "started_at",
+    "data_key_id",
+    "transcript",
+    "allowed_amounts",
+    "allowed_numbers",
+    "offered_slots",
+    "turn_count",
+    "language",
+    "idempotency_keys",
+    "version",
+}
 
 
 def test_call_state_public_surface_is_data_and_recorders_only() -> None:
