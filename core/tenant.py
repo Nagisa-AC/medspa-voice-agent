@@ -285,8 +285,79 @@ def _zones() -> frozenset[str]:
 
 
 def normalize_phrase(text: str) -> str:
-    """Casefold, turn punctuation into spaces, collapse whitespace."""
-    return " ".join(re.sub(r"[\W_]+", " ", text.casefold()).split())
+    """Casefold, turn punctuation into spaces, collapse whitespace, fold plural "s".
+
+    Used for caller text and config phrases alike, so alias uniqueness and matching
+    always agree.
+    """
+    return " ".join(_fold_plural(t) for t in re.sub(r"[\W_]+", " ", text.casefold()).split())
+
+
+def _fold_plural(token: str) -> str:
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+# --------------------------------------------------------------------------- resolution
+
+
+@dataclass(frozen=True)
+class Match:
+    service: Service
+
+
+@dataclass(frozen=True)
+class Ambiguous:
+    services: tuple[Service, ...]  # two or more, distinct, in order of first mention
+
+
+@dataclass(frozen=True)
+class NoMatch:
+    pass
+
+
+Resolution = Match | Ambiguous | NoMatch
+
+
+def resolve_service(tenant: Tenant, text: str) -> Resolution:
+    """Whole-phrase, token-by-token match of caller text against service names and aliases.
+
+    A match lying inside a longer match from a different service is dropped.
+    """
+    words = normalize_phrase(text).split()
+    spans: list[tuple[int, int, int]] = []  # (start, end, service index)
+    for index, service in enumerate(tenant.services):
+        for phrase in (service.name, *service.aliases):
+            tokens = normalize_phrase(phrase).split()
+            size = len(tokens)
+            if not size:
+                continue
+            for start in range(len(words) - size + 1):
+                if words[start : start + size] == tokens:
+                    spans.append((start, start + size, index))
+
+    kept = [
+        span
+        for span in spans
+        if not any(
+            other[2] != span[2]
+            and other[0] <= span[0]
+            and span[1] <= other[1]
+            and other[1] - other[0] > span[1] - span[0]
+            for other in spans
+        )
+    ]
+    order: list[int] = []
+    for _, _, index in sorted(kept):
+        if index not in order:
+            order.append(index)
+
+    if not order:
+        return NoMatch()
+    if len(order) == 1:
+        return Match(tenant.services[order[0]])
+    return Ambiguous(tuple(tenant.services[i] for i in order))
 
 
 # --------------------------------------------------------------------------- rules
