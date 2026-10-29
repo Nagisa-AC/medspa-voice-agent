@@ -1,0 +1,17 @@
+# Planning documents never belong in this repo.
+docs/
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# Local secrets and event logs (may hold encrypted caller data)
+.env
+.env.*
+*.jsonl
