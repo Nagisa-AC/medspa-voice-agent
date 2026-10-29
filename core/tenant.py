@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
+from types import MappingProxyType
 from typing import Annotated, Any, Literal, Self
 from zoneinfo import ZoneInfo, available_timezones
 
@@ -243,8 +244,8 @@ class Tenant(_Model):
     max_seconds: PositiveInt
     retention_days: PositiveInt
     services: Annotated[tuple[Service, ...], Field(min_length=1)]
-    facts: dict[Slug, Text] = Field(default_factory=dict)
-    policies: dict[Slug, Text] = Field(default_factory=dict)
+    facts: Mapping[Slug, Text] = Field(default_factory=dict, validate_default=True)
+    policies: Mapping[Slug, Text] = Field(default_factory=dict, validate_default=True)
     faq: tuple[FaqEntry, ...] = ()
     transfer_tiers: tuple[TransferTier, ...]
     callback_promise: Text
@@ -253,6 +254,11 @@ class Tenant(_Model):
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
+
+    @field_validator("facts", "policies")
+    @classmethod
+    def _read_only(cls, value: Mapping[str, str]) -> Mapping[str, str]:
+        return MappingProxyType(dict(value))
 
     @field_validator("timezone")
     @classmethod
@@ -347,6 +353,10 @@ def _service_rules(services: tuple[Service, ...]) -> list[Issue]:
                     issues.append(Issue(f"{p}.{field}", "not allowed when quotable is false"))
         if s.deposit_required and s.deposit_amount is None:
             issues.append(Issue(f"{p}.deposit_amount", "required when deposit_required is true"))
+        elif s.quotable and not s.deposit_required and s.deposit_amount is not None:
+            issues.append(
+                Issue(f"{p}.deposit_amount", "only allowed when deposit_required is true")
+            )
     return issues
 
 
@@ -400,6 +410,12 @@ def _construct_mapping(loader: _Loader, node: yaml.MappingNode) -> dict[Any, Any
     seen: set[Any] = set()
     for key_node, _ in node.value:
         key = loader.construct_object(key_node, deep=True)
+        try:
+            hash(key)
+        except TypeError:
+            raise yaml.constructor.ConstructorError(
+                None, None, f"unhashable key {key!r}", key_node.start_mark
+            ) from None
         if key in seen:
             raise yaml.constructor.ConstructorError(
                 None, None, f"duplicate key {key!r}", key_node.start_mark

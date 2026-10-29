@@ -114,6 +114,12 @@ BROKEN: list[tuple[str, Callable[[Data], None], str]] = [
     ("bookable_no_room", drop(svc(0), "room_type"), "services[0].room_type"),
     ("bookable_no_providers", set_(svc(0), "provider_types", []), "services[0].provider_types"),
     ("deposit_no_amount", drop(svc(1), "deposit_amount"), "services[1].deposit_amount"),
+    ("deposit_not_required", drop(svc(1), "deposit_required"), "services[1].deposit_amount"),
+    (
+        "deposit_required_false",
+        set_(svc(1), "deposit_required", False),
+        "services[1].deposit_amount",
+    ),
     # Valid IANA timezone (region-style)
     ("timezone_unknown", set_(top, "timezone", "Mars/Base"), "timezone"),
     ("timezone_abbreviation", set_(top, "timezone", "EST"), "timezone"),
@@ -245,6 +251,26 @@ def test_models_are_frozen() -> None:
         tenant.max_turns = 5  # type: ignore[misc]
 
 
+@pytest.mark.parametrize("field", ["facts", "policies"])
+def test_text_maps_are_read_only(field: str) -> None:
+    tenant = parse_tenant(base(), source="x", today=TODAY)
+    mapping: Any = getattr(tenant, field)
+    with pytest.raises(TypeError):
+        mapping["hours"] = "changed"
+    with pytest.raises(TypeError):
+        del mapping[next(iter(mapping))]
+
+
+def test_missing_text_maps_default_to_read_only() -> None:
+    data = base()
+    del data["facts"]
+    tenant = parse_tenant(data, source="x", today=TODAY)
+    mapping: Any = tenant.facts
+    assert dict(mapping) == {}
+    with pytest.raises(TypeError):
+        mapping["hours"] = "changed"
+
+
 def test_normalize_phrase() -> None:
     assert normalize_phrase("  Lip-Filler!! ") == "lip filler"
     assert normalize_phrase("Juvéderm") == "juvéderm"
@@ -296,6 +322,13 @@ def test_nested_duplicate_key_is_rejected(tmp_path: Path) -> None:
     )
     [issue] = file_issues(path)
     assert "duplicate key 'answers_live'" in issue.message
+
+
+def test_unhashable_key_names_file_and_line(tmp_path: Path) -> None:
+    path = write_variant(tmp_path, "max_turns: 10", "max_turns: 10\n? [a, b]\n: x")
+    [issue] = file_issues(path)
+    assert "unhashable key" in issue.message
+    assert "line 12" in issue.message
 
 
 def test_yaml_syntax_error_names_line(tmp_path: Path) -> None:
