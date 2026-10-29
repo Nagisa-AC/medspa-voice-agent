@@ -1,0 +1,64 @@
+# Valid base config for tenant loader tests. Broken cases are patches of this file.
+id: test_spa
+name: Test Spa
+vertical: medspa
+timezone: America/Chicago
+main_number: "+15555550100"
+greeting: "Hello, this is the test spa's virtual assistant."
+record_disclosure: "This call is recorded."
+ai_identity_reply: "Yes, I'm a virtual assistant."
+reminder_line: "Still there?"
+max_turns: 10
+max_seconds: 60
+retention_days: 7
+
+services:
+  - id: alpha
+    name: Alpha Treatment
+    aliases: [alpha, first thing]
+    duration_min: 30
+    room_type: room_a
+    provider_types: [P1]
+    price_min: 10
+    price_max: 20.50
+    price_unit: "per item"
+  - id: beta
+    name: Beta Treatment
+    aliases: [beta]
+    duration_min: 60
+    room_type: room_b
+    provider_types: [P1, P2]
+    price_min: 100
+    price_max: 100
+    price_unit: "per session"
+    deposit_required: true
+    deposit_amount: 25
+  - id: gamma
+    name: Gamma Program
+    aliases: [gamma]
+    quotable: false
+    consult_required: true
+
+facts:
+  hours: "Weekdays 9 to 5."
+policies:
+  cancellation: "A day's notice, please."
+
+faq:
+  - id: alpha_duration
+    topics: [alpha last]
+    say: "A test answer."
+    approved_by: "Test Approver"
+    approved_on: 2026-01-15
+
+transfer_tiers:
+  - {tier: 1, kind: transfer, target: "+15555550101", label: desk,
+     answers_live: true, live_hours: "Mon-Fri 09:00-17:00"}
+  - {tier: 2, kind: transfer, target: "+15555550102", label: manager, answers_live: false}
+  - {tier: 3, kind: sms_summary, target: "+15555550102", label: text_team}
+
+callback_promise: "We'll call you back."
+
+integration:
+  provider: mock
+  location_id: loc_test

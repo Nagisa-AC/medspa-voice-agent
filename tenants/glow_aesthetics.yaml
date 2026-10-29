@@ -1,0 +1,70 @@
+# Fictional demo tenant. Not a real business: names, address and approvals are invented,
+# and every phone number is a 555 number.
+id: glow_aesthetics
+name: Glow Aesthetics
+vertical: medspa
+timezone: America/New_York
+main_number: "+12035550100"      # the published line that forwards to us; never a transfer target
+greeting: "Thanks for calling Glow Aesthetics, this is Ava, the spa's virtual assistant. How can I help?"
+record_disclosure: "Just so you know, this call is recorded."
+ai_identity_reply: "Yes, I'm Glow's virtual assistant. I can help with prices and booking, or get someone from the team for you."
+reminder_line: "Are you still there?"
+max_turns: 40
+max_seconds: 420
+retention_days: 30                 # proposed default; attorney to confirm
+
+services:
+  - id: tox
+    name: Botox
+    aliases: [botox, dysport, xeomin, tox, wrinkle relaxer]
+    duration_min: 30
+    room_type: injectable
+    provider_types: [NP, RN]
+    price_min: 13
+    price_max: 15
+    price_unit: "per unit"        # NEVER quote a total for unit-priced items
+    notes: "Units are decided by the injector at the appointment."
+  - id: filler
+    name: Dermal Filler
+    aliases: [filler, lip filler, juvederm, restylane]
+    duration_min: 45
+    room_type: injectable
+    provider_types: [NP]
+    price_min: 700
+    price_max: 950
+    price_unit: "per syringe"
+    deposit_required: true
+    deposit_amount: 100
+  - id: weightloss
+    name: Weight Loss Program
+    aliases: [weight loss, glp, semaglutide, ozempic]
+    quotable: false
+    consult_required: true
+
+facts:
+  hours: "Monday through Friday 9 to 6, Saturday 10 to 4, closed Sunday."
+  address: "1420 Chapel Street, Suite 200, New Haven."
+  parking: "Free lot behind the building, enter from Howe Street."
+policies:
+  cancellation: "24 hours notice, otherwise there's a $50 fee."
+  minors: "Patients under 18 need a parent or guardian present."
+
+faq:                               # owner-approved; spoken verbatim; no model paraphrase
+  - id: tox_duration
+    topics: [botox last, tox last, how long botox, wear off]
+    say: "Most clients come back every three to four months, and your injector will go over what to expect at your visit."
+    approved_by: "Dr. Jane Doe, NP"
+    approved_on: 2026-10-29
+
+transfer_tiers:
+  - {tier: 1, kind: transfer, target: "+12035550101", label: front_desk_direct,
+     answers_live: true, live_hours: "Mon-Fri 09:00-18:00, Sat 10:00-16:00"}
+  - {tier: 2, kind: transfer, target: "+12035550102", label: manager_cell,
+     answers_live: false}
+  - {tier: 3, kind: sms_summary, target: "+12035550102", label: capture_and_text}
+
+callback_promise: "Someone from the team will call you back at this number within the hour during business hours, or first thing the next business morning."
+
+integration:
+  provider: mock                   # mock | capture | square | <pms>
+  location_id: "loc_glow_01"
