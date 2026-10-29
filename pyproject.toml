@@ -3,6 +3,7 @@ name = "medspa-voice-agent"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "cryptography>=50.0.2,<51",
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3,<7",
 ]
