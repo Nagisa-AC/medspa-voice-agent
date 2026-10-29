@@ -94,6 +94,12 @@ BROKEN: list[tuple[str, Callable[[Data], None], str]] = [
     ("alias_differs_only_in_case", set_(svc(1), "aliases", ["ALPHA!"]), "services[1].aliases[0]"),
     ("alias_is_other_name", set_(svc(1), "aliases", ["alpha treatment"]), "services[1].aliases[0]"),
     ("alias_duplicate_in_service", set_(svc(0), "aliases", ["x", "X"]), "services[0].aliases[1]"),
+    (
+        "alias_plural_duplicate_in_service",
+        set_(svc(0), "aliases", ["filler", "fillers"]),
+        "services[0].aliases[1]",
+    ),
+    ("alias_plural_in_two_services", set_(svc(1), "aliases", ["alphas"]), "services[1].aliases[0]"),
     ("alias_blank", set_(svc(0), "aliases", ["  "]), "services[0].aliases[0]"),
     ("alias_punctuation_only", set_(svc(0), "aliases", ["--"]), "services[0].aliases[0]"),
     # Quotable services need price_min, price_max (Decimal), price_unit, min <= max
@@ -271,9 +277,24 @@ def test_missing_text_maps_default_to_read_only() -> None:
         mapping["hours"] = "changed"
 
 
-def test_normalize_phrase() -> None:
-    assert normalize_phrase("  Lip-Filler!! ") == "lip filler"
-    assert normalize_phrase("Juvéderm") == "juvéderm"
+@pytest.mark.parametrize(
+    ("text", "normalized"),
+    [
+        ("  Lip-Filler!! ", "lip filler"),
+        ("Juvéderm", "juvéderm"),
+        ("lip fillers", "lip filler"),
+        ("loss", "loss"),
+        ("glass", "glass"),
+        ("tox", "tox"),
+        ("abs", "abs"),
+        ("lips", "lip"),
+        ("lashes", "lashe"),
+        ("botox's", "botox s"),
+        ("FILLERS", "filler"),
+    ],
+)
+def test_normalize_phrase(text: str, normalized: str) -> None:
+    assert normalize_phrase(text) == normalized
 
 
 # --------------------------------------------------------------------------- YAML traps
