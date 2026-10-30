@@ -44,6 +44,7 @@ CONFIRM = "Just to confirm: {what} on {time}. Should I go ahead and book that?"
 CONFIRM_BARE = "Just to confirm — should I go ahead and book that?"
 NEED_NAME = "I need a name for the booking."
 NEED_PHONE = "Can I get a good number to reach you at?"
+NO_OFFER = "Let me find you a time. What would you like to book?"
 NOT_HELD = "I don't have that time held. "
 TAKEN = "That time was just taken. "
 UNAVAILABLE = "That time isn't open anymore. "
@@ -275,13 +276,21 @@ def normalize_phone(raw: str) -> str | None:
     """Return E.164, or None if the input cannot be a reachable number."""
     text = raw.strip()
     if _E164.fullmatch(text):
+        if text.startswith("+1"):
+            return _nanp_from_national(text[2:])
         return text
     digits = re.sub(r"\D", "", text)
     if len(digits) == 10:
-        return f"+1{digits}"
+        return _nanp_from_national(digits)
     if len(digits) == 11 and digits.startswith("1"):
-        return f"+1{digits[1:]}"
+        return _nanp_from_national(digits[1:])
     return None
+
+
+def _nanp_from_national(national: str) -> str | None:
+    if len(national) != 10 or national[0] in "01":
+        return None
+    return f"+1{national}"
 
 
 async def book(
@@ -323,9 +332,12 @@ async def book(
             state, NEED_PHONE, _flags(booked=False, needs_review=False, retry=False), extract
         )
     if len(hits) != 1:
-        service_id = state.offered_slots[0].service_id if state.offered_slots else CONSULT_ID
+        if not state.offered_slots:
+            return _finish(
+                state, NO_OFFER, _flags(booked=False, needs_review=False, retry=True), extract
+            )
         prefix = DST_COLLISION if len(hits) > 1 else NOT_HELD
-        times = await _relist(tenant, state, adapter, service_id, now)
+        times = await _relist(tenant, state, adapter, state.offered_slots[0].service_id, now)
         return _finish(
             state, prefix + times, _flags(booked=False, needs_review=False, retry=True), extract
         )

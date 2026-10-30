@@ -453,6 +453,18 @@ def test_normalize_phone_rejects_local_seven() -> None:
     assert normalize_phone("555-1234") is None
 
 
+def test_normalize_phone_rejects_short_plus_one() -> None:
+    assert normalize_phone("+12") is None
+
+
+def test_normalize_phone_rejects_area_code_starting_with_zero() -> None:
+    assert normalize_phone("(023) 555-1234") is None
+
+
+def test_normalize_phone_accepts_non_nanp_e164() -> None:
+    assert normalize_phone("+442071234567") == "+442071234567"
+
+
 async def test_book_filler_success_and_deposit() -> None:
     listed, state, adapter = await seed("lip filler", earliest_iso="2026-11-16T14:00:00")
     iso = slot_iso(listed)
@@ -529,7 +541,7 @@ async def test_book_reasks_short_phone() -> None:
     assert state.offered_slots == offered
 
 
-@pytest.mark.parametrize("phone", ["(203) 555-1234", "203.555.1234", "1 203 555 1234"])
+@pytest.mark.parametrize("phone", ["(203) 555-1234", "203.555.1234", "1 203 555 1234", PHONE])
 async def test_book_normalizes_nanp_phone(phone: str) -> None:
     listed, state, adapter = await seed("botox")
     iso = slot_iso(listed)
@@ -537,6 +549,67 @@ async def test_book_normalizes_nanp_phone(phone: str) -> None:
     assert result.model["booked"] is True
     booking_id = next(iter(adapter._bookings))
     assert adapter._patients[booking_id] == PHONE
+
+
+@pytest.mark.parametrize("phone", ["+12", "(023) 555-1234"])
+async def test_book_reasks_invalid_plus_one(phone: str) -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    offered = list(state.offered_slots)
+    result = await book_it(state, adapter, iso, phone=phone)
+    assert result.say == "Can I get a good number to reach you at?"
+    assert result.model["booked"] is False
+    assert adapter._bookings == {}
+    assert state.offered_slots == offered
+
+
+async def test_book_accepts_non_nanp_e164() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    result = await book_it(state, adapter, iso, phone="+442071234567")
+    assert result.model["booked"] is True
+    booking_id = next(iter(adapter._bookings))
+    assert adapter._patients[booking_id] == "+442071234567"
+
+
+async def test_book_with_no_offer_does_not_guess() -> None:
+    state = glow_state()
+    assert state.offered_slots == []
+
+    class Boom:
+        listed = False
+
+        async def list_availability(self, **_kwargs: object) -> tuple[Slot, ...]:
+            self.listed = True
+            raise AssertionError("empty offer must not list")
+
+        async def create_booking(self, **_kwargs: object) -> object:
+            raise AssertionError("must not book")
+
+        async def get_booking(self, booking_id: str) -> object:
+            raise AssertionError("must not get")
+
+    boom = Boom()
+    result = await book(
+        GLOW,
+        state,
+        boom,  # type: ignore[arg-type]
+        slot_start_iso="2026-11-13T17:00:00",
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=True,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert result.say == "Let me find you a time. What would you like to book?"
+    assert result.model["retry"] is True
+    assert result.model["booked"] is False
+    assert boom.listed is False
+    assert state.offered_slots == []
+    assert "consult" not in result.say.lower()
+    assert "I have" not in result.say
+    assert_say_passes(state, result.say)
 
 
 async def test_book_not_in_offer_relists() -> None:
