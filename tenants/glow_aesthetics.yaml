@@ -41,6 +41,12 @@ services:
     quotable: false
     consult_required: true
 
+consult:
+  name: Consult
+  duration_min: 30
+  room_type: injectable
+  provider_types: [NP, RN]
+
 facts:
   hours: "Monday through Friday 9 to 6, Saturday 10 to 4, closed Sunday."
   address: "1420 Chapel Street, Suite 200, New Haven."

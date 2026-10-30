@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal, Protocol
 
@@ -37,7 +37,19 @@ class AgentLine:
 class OfferedSlot:
     service_id: str
     start: datetime
-    provider_id: str | None
+    end: datetime
+    provider_id: str
+    room_id: str
+    version: int
+
+    def __post_init__(self) -> None:
+        for name, value in (("start", self.start), ("end", self.end)):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"{name} must be timezone-aware")
+            if value.utcoffset() != timedelta(0):
+                raise ValueError(f"{name} must be UTC")
+        if self.end <= self.start:
+            raise ValueError("end must be after start")
 
 
 # --------------------------------------------------------------------------- escalation

@@ -93,6 +93,7 @@ def _slug(value: str) -> str:
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 E164 = Annotated[str, AfterValidator(_e164)]
 Slug = Annotated[str, AfterValidator(_slug)]
+CONSULT_ID = "consult"
 Price = Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
 StrictBool = Annotated[bool, Field(strict=True)]
@@ -225,6 +226,13 @@ class FaqEntry(_Model):
     approved_on: Annotated[date, Field(strict=True)]
 
 
+class Consult(_Model):
+    name: Text
+    duration_min: PositiveInt
+    room_type: Text
+    provider_types: Annotated[tuple[Text, ...], Field(min_length=1)]
+
+
 class Integration(_Model):
     provider: Text
     location_id: Text
@@ -244,6 +252,7 @@ class Tenant(_Model):
     max_seconds: PositiveInt
     retention_days: PositiveInt
     services: Annotated[tuple[Service, ...], Field(min_length=1)]
+    consult: Consult
     facts: Mapping[Slug, Text] = Field(default_factory=dict, validate_default=True)
     policies: Mapping[Slug, Text] = Field(default_factory=dict, validate_default=True)
     faq: tuple[FaqEntry, ...] = ()
@@ -417,6 +426,8 @@ def _service_rules(services: tuple[Service, ...]) -> list[Issue]:
     seen_ids: dict[str, int] = {}
     owners: dict[str, int] = {}
     for i, s in enumerate(services):
+        if s.id == CONSULT_ID:
+            issues.append(Issue(f"services[{i}].id", "is reserved for the tenant consult"))
         if s.id in seen_ids:
             issues.append(Issue(f"services[{i}].id", f"duplicates services[{seen_ids[s.id]}].id"))
         seen_ids.setdefault(s.id, i)
