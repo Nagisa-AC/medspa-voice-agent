@@ -1,11 +1,15 @@
-"""Sentence buffer and number check on model sentences. Clinical check lands later."""
+"""Sentence buffer, number check, and clinical output check on model sentences."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Set
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
 
 from core.numbers import Found
 
@@ -133,13 +137,16 @@ NumberExtractor = Callable[[str], Iterable[Found]]
 
 @dataclass(frozen=True)
 class Blocked:
-    reason: NumberBlockReason
-    blocked_amount: int
-    blocked_price_context: int
-    blocked_plain: int
-    check: Literal["numbers"] = "numbers"
+    check: Literal["numbers", "clinical"]
+    reason: NumberBlockReason | None = None
+    pattern_ids: tuple[str, ...] = ()
+    blocked_amount: int = 0
+    blocked_price_context: int = 0
+    blocked_plain: int = 0
 
     def __repr__(self) -> str:
+        if self.check == "clinical":
+            return f"Blocked(check={self.check!r}, pattern_ids={self.pattern_ids!r})"
         return (
             f"Blocked(check={self.check!r}, reason={self.reason!r}, "
             f"blocked_amount={self.blocked_amount}, "
@@ -180,6 +187,7 @@ def check_numbers(
     else:
         reason = "unknown_number"
     return Blocked(
+        check="numbers",
         reason=reason,
         blocked_amount=n_amount,
         blocked_price_context=n_price,
@@ -191,3 +199,109 @@ def _small_plain(value: Decimal) -> bool:
     if value != value.to_integral_value():
         return False
     return Decimal(0) <= value <= Decimal(12)
+
+
+# --------------------------------------------------------------------------- clinical output check
+
+
+_SLUG = re.compile(r"[a-z][a-z0-9_]*")
+_APOSTROPHES = str.maketrans({"\u2018": "'", "\u2019": "'"})
+_PACK_KEYS = frozenset({"deflect", "patterns"})
+_PATTERN_KEYS = frozenset({"id", "regex"})
+
+
+class OutputPackError(Exception):
+    def __init__(self, path: str, message: str) -> None:
+        self.path = path
+        self.message = message
+        super().__init__(f"{path}: {message}")
+
+
+@dataclass(frozen=True)
+class OutputPattern:
+    id: str
+    regex: re.Pattern[str]
+
+
+@dataclass(frozen=True)
+class OutputPack:
+    deflect: str
+    patterns: tuple[OutputPattern, ...]
+
+
+def load_output_pack(path: Path) -> OutputPack:
+    """Load output patterns. Invalid regex, duplicate ids, or a missing deflect fail closed."""
+    source = str(path)
+    try:
+        raw: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise OutputPackError(source, f"invalid YAML: {exc}") from None
+    if not isinstance(raw, dict):
+        raise OutputPackError(source, "pack must be a mapping")
+    extra = set(raw) - _PACK_KEYS
+    if extra:
+        raise OutputPackError(source, f"unknown fields {sorted(extra)}")
+    deflect = raw.get("deflect")
+    if not isinstance(deflect, str) or not deflect.strip():
+        raise OutputPackError(source, "missing deflect")
+    patterns_raw = raw.get("patterns")
+    if not isinstance(patterns_raw, list) or not patterns_raw:
+        raise OutputPackError(source, "patterns must be a non-empty list")
+    patterns: list[OutputPattern] = []
+    seen: set[str] = set()
+    for i, item in enumerate(patterns_raw):
+        patterns.append(_load_pattern(source, i, item, seen))
+    return OutputPack(deflect=deflect.strip(), patterns=tuple(patterns))
+
+
+def check_clinical(sentence: str, pack: OutputPack) -> Pass | Blocked:
+    """Block model sentences that match a clinical output pattern. Result holds ids only."""
+    folded = sentence.translate(_APOSTROPHES)
+    hits = tuple(pattern.id for pattern in pack.patterns if pattern.regex.search(folded))
+    if not hits:
+        return Pass()
+    return Blocked(check="clinical", pattern_ids=hits)
+
+
+def check_sentence(
+    sentence: str,
+    pack: OutputPack,
+    *,
+    allowed_amounts: Set[Decimal],
+    allowed_numbers: Set[Decimal],
+    extract: NumberExtractor,
+) -> Pass | Blocked:
+    """Run both checks. A clinical hit wins over a number hit."""
+    numbers = check_numbers(
+        sentence,
+        allowed_amounts=allowed_amounts,
+        allowed_numbers=allowed_numbers,
+        extract=extract,
+    )
+    clinical = check_clinical(sentence, pack)
+    if isinstance(clinical, Blocked):
+        return clinical
+    return numbers
+
+
+def _load_pattern(source: str, index: int, item: object, seen: set[str]) -> OutputPattern:
+    loc = f"patterns[{index}]"
+    if not isinstance(item, dict):
+        raise OutputPackError(source, f"{loc} must be a mapping")
+    extra = set(item) - _PATTERN_KEYS
+    if extra:
+        raise OutputPackError(source, f"{loc} unknown fields {sorted(extra)}")
+    pattern_id = item.get("id")
+    if not isinstance(pattern_id, str) or not _SLUG.fullmatch(pattern_id):
+        raise OutputPackError(source, f"{loc}.id must be a slug")
+    if pattern_id in seen:
+        raise OutputPackError(source, f"duplicate id {pattern_id!r}")
+    seen.add(pattern_id)
+    regex_text = item.get("regex")
+    if not isinstance(regex_text, str) or not regex_text:
+        raise OutputPackError(source, f"{loc}.regex is required")
+    try:
+        compiled = re.compile(regex_text, re.IGNORECASE)
+    except re.error as exc:
+        raise OutputPackError(source, f"{loc}.regex invalid: {exc}") from None
+    return OutputPattern(id=pattern_id, regex=compiled)

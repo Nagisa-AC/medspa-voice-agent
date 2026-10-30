@@ -10,7 +10,17 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 import core.guardrail
-from core.guardrail import ABBREVIATIONS, Blocked, Pass, SentenceBuffer, check_numbers
+from core.guardrail import (
+    ABBREVIATIONS,
+    Blocked,
+    OutputPackError,
+    Pass,
+    SentenceBuffer,
+    check_clinical,
+    check_numbers,
+    check_sentence,
+    load_output_pack,
+)
 from core.numbers import find_numbers
 from core.state import CallState, admit_numbers, new_call_state
 from core.tenant import extra_price_words, load_tenant_file
@@ -217,7 +227,10 @@ def test_guardrail_import_layers() -> None:
         "core.numbers",
         "dataclasses",
         "decimal",
+        "pathlib",
+        "re",
         "typing",
+        "yaml",
     }
     assert "core.state" not in imported
     assert "core.tenant" not in imported
@@ -340,3 +353,261 @@ def test_blocked_repr_has_no_digits_from_the_sentence() -> None:
     shown = repr(result) + str(result)
     for fragment in ("203", "555", "0100", "450", sentence):
         assert fragment not in shown
+
+
+# --------------------------------------------------------------------------- clinical output check
+
+
+PACK = load_output_pack(ROOT / "packs" / "medspa.output.yaml")
+_DEFLECT = (
+    "That's a great question for our injector. I can book you a consult, "
+    "or have them call you back."
+)
+_PATTERN_CASES: list[tuple[str, str, str]] = [
+    ("side_effects", "There can be side effects.", "I'll set that aside."),
+    ("risks", "There are some risks.", "The parking is around the back."),
+    ("safe", "it's totally safe", "safe to say"),
+    ("pain", "it can be painful", "pain in the neck"),
+    ("hurt", "it might hurt a little", "See you Thursday."),
+    ("numb", "you may feel numbing", "I'll take the number"),
+    ("downtime", "there's no downtime", "I'll write it down"),
+    ("recovery", "recovery takes a week", "I'll recover the slot."),
+    ("heal", "it heals in a few days", "health insurance is on file"),
+    ("swelling", "you'll have some swelling", "The building has parking."),
+    ("bruise", "some bruising is common", "I'll browse the calendar"),
+    ("lasts", "Botox can last up to four months", "last name"),
+    ("wears_off", "it wears off in three months", "the wear and tear"),
+    ("results", "you'll see results in two weeks", "search results"),
+    ("dose", "the dose is decided at the visit", "See you soon."),
+    ("mg", "that's 2 mg", "I'm good"),
+    ("units_needed", "units you'll need", "20 to 60 units"),
+    ("contraindication", "that's a contraindication", "I have no concerns"),
+    ("pregnancy", "if you're pregnant", "I'll take the premium slot"),
+    ("breastfeeding", "while breastfeeding", "I'll book the morning"),
+    ("allergy", "any allergies", "I'll see you later."),
+    ("candidate", "are you a candidate", "I'll take Tuesday"),
+    ("aftercare", "aftercare is rest", "after the appointment"),
+    ("avoid_aftercare", "avoid exercise for a day", "avoid the highway"),
+    (
+        "reassurance",
+        "A headache after Botox is totally normal, it'll go away.",
+        "I can book Thursday morning.",
+    ),
+    ("symptoms", "there's some redness", "The parking lot is behind the building."),
+    ("advice", "take ibuprofen if needed", "That's a nice idea."),
+]
+
+
+def _write_pack(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "pack.yaml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def _clinical(sentence: str) -> Pass | Blocked:
+    return check_clinical(sentence, PACK)
+
+
+def test_production_pack_loads() -> None:
+    assert PACK.deflect == _DEFLECT
+    assert {pattern.id for pattern in PACK.patterns} == {row[0] for row in _PATTERN_CASES}
+
+
+def test_every_pack_id_has_a_case() -> None:
+    assert [pattern.id for pattern in PACK.patterns] == [row[0] for row in _PATTERN_CASES]
+
+
+@pytest.mark.parametrize(("pattern_id", "positive", "negative"), _PATTERN_CASES)
+def test_each_pattern_has_a_hit_and_a_miss(pattern_id: str, positive: str, negative: str) -> None:
+    hit = _clinical(positive)
+    assert isinstance(hit, Blocked)
+    assert hit.check == "clinical"
+    assert pattern_id in hit.pattern_ids
+    miss = _clinical(negative)
+    assert isinstance(miss, Pass)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Botox can last up to four months",
+        "it'll last about three months",
+        "lasts three months",
+        "Botox usually lasts three months",
+        "Filler lasts about a year.",
+    ],
+)
+def test_lasts_true_hits(sentence: str) -> None:
+    result = _clinical(sentence)
+    assert isinstance(result, Blocked)
+    assert "lasts" in result.pattern_ids
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "last name",
+        "last week",
+        "at last",
+        "your last visit",
+        "last weekend",
+        "last time",
+        "last appointment",
+        "last night",
+        "last month",
+        "last year",
+        "last call",
+    ],
+)
+def test_lasts_false_hits(sentence: str) -> None:
+    assert isinstance(_clinical(sentence), Pass)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "you'll see results in two weeks",
+        "results vary",
+        "great results",
+    ],
+)
+def test_results_true_hits(sentence: str) -> None:
+    result = _clinical(sentence)
+    assert isinstance(result, Blocked)
+    assert "results" in result.pattern_ids
+
+
+def test_search_results_do_not_block() -> None:
+    assert isinstance(_clinical("search results"), Pass)
+    assert isinstance(_clinical("search result"), Pass)
+
+
+def test_key_reassurance_sentence_also_hits_symptoms() -> None:
+    sentence = "A headache after Botox is totally normal, it'll go away."
+    result = _clinical(sentence)
+    assert isinstance(result, Blocked)
+    assert "reassurance" in result.pattern_ids
+    assert "symptoms" in result.pattern_ids
+
+
+def test_curly_apostrophe_units_needed() -> None:
+    sentence = "units you\u2019ll need"
+    result = _clinical(sentence)
+    assert isinstance(result, Blocked)
+    assert "units_needed" in result.pattern_ids
+    shown = repr(result) + str(result)
+    assert sentence not in shown
+    assert "you\u2019ll" not in shown
+
+
+def test_clinical_blocked_repr_has_no_sentence() -> None:
+    sentence = "Botox can last up to four months"
+    result = _clinical(sentence)
+    assert isinstance(result, Blocked)
+    shown = repr(result) + str(result)
+    assert sentence not in shown
+    assert "Botox" not in shown
+    assert "four" not in shown
+    assert result.reason is None
+    assert result.blocked_amount == 0
+
+
+def test_clinical_wins_when_both_checks_fail() -> None:
+    sentence = "Botox is 12 and it's totally safe"
+    result = check_sentence(
+        sentence,
+        PACK,
+        allowed_amounts=_glow_state().allowed_amounts,
+        allowed_numbers=_glow_state().allowed_numbers,
+        extract=glow_extract,
+    )
+    assert isinstance(result, Blocked)
+    assert result.check == "clinical"
+    assert "safe" in result.pattern_ids
+    numbers = _check(sentence)
+    assert isinstance(numbers, Blocked)
+    assert numbers.check == "numbers"
+
+
+def test_check_sentence_number_only() -> None:
+    sentence = "So that'll be about $450 total."
+    result = check_sentence(
+        sentence,
+        PACK,
+        allowed_amounts=_glow_state().allowed_amounts,
+        allowed_numbers=_glow_state().allowed_numbers,
+        extract=glow_extract,
+    )
+    assert isinstance(result, Blocked)
+    assert result.check == "numbers"
+    assert result.pattern_ids == ()
+
+
+def test_check_sentence_passes_booking_readback() -> None:
+    result = check_sentence(
+        "So that's Botox Thursday at 2 PM?",
+        PACK,
+        allowed_amounts=_glow_state().allowed_amounts,
+        allowed_numbers=_glow_state().allowed_numbers,
+        extract=glow_extract,
+    )
+    assert isinstance(result, Pass)
+
+
+def test_load_missing_deflect(tmp_path: Path) -> None:
+    path = _write_pack(
+        tmp_path,
+        "patterns:\n  - id: side_effects\n    regex: 'x'\n",
+    )
+    with pytest.raises(OutputPackError, match="missing deflect"):
+        load_output_pack(path)
+
+
+def test_load_blank_deflect(tmp_path: Path) -> None:
+    path = _write_pack(
+        tmp_path,
+        "deflect: '   '\npatterns:\n  - id: side_effects\n    regex: 'x'\n",
+    )
+    with pytest.raises(OutputPackError, match="missing deflect"):
+        load_output_pack(path)
+
+
+def test_load_duplicate_id(tmp_path: Path) -> None:
+    path = _write_pack(
+        tmp_path,
+        "deflect: keep\npatterns:\n"
+        "  - id: side_effects\n    regex: 'a'\n"
+        "  - id: side_effects\n    regex: 'b'\n",
+    )
+    with pytest.raises(OutputPackError, match="duplicate id 'side_effects'"):
+        load_output_pack(path)
+
+
+def test_load_invalid_regex(tmp_path: Path) -> None:
+    path = _write_pack(
+        tmp_path,
+        "deflect: keep\npatterns:\n  - id: side_effects\n    regex: '('\n",
+    )
+    with pytest.raises(OutputPackError, match=r"patterns\[0\]\.regex invalid"):
+        load_output_pack(path)
+
+
+def test_load_missing_id(tmp_path: Path) -> None:
+    path = _write_pack(
+        tmp_path,
+        "deflect: keep\npatterns:\n  - regex: 'x'\n",
+    )
+    with pytest.raises(OutputPackError, match=r"patterns\[0\]\.id must be a slug"):
+        load_output_pack(path)
+
+
+def test_load_empty_patterns(tmp_path: Path) -> None:
+    path = _write_pack(tmp_path, "deflect: keep\npatterns: []\n")
+    with pytest.raises(OutputPackError, match="patterns must be a non-empty list"):
+        load_output_pack(path)
+
+
+def test_load_invalid_yaml(tmp_path: Path) -> None:
+    path = _write_pack(tmp_path, "deflect: [\n")
+    with pytest.raises(OutputPackError, match="invalid YAML"):
+        load_output_pack(path)
