@@ -1,4 +1,5 @@
 import ast
+import base64
 import json
 import logging
 import os
@@ -17,6 +18,7 @@ from core.crypto import (
     InMemoryKeyStore,
     InvalidCiphertextError,
     Shredded,
+    UnknownCallKeyError,
     bind_aad,
 )
 from core.events import (
@@ -95,6 +97,60 @@ async def test_in_memory_and_jsonl_read_back_in_order(
         filtered = await log.read("call_1")
         assert len(filtered) == 2
         assert await log.read("other") == ()
+
+
+def _flip_ciphertext_b64(blob: str) -> str:
+    data = base64.b64decode(blob)
+    flipped = bytes([data[0] ^ 1]) + data[1:]
+    return base64.b64encode(flipped).decode("ascii")
+
+
+def _tamper_stored_text(record: dict[str, object]) -> None:
+    payload = record["payload"]
+    assert isinstance(payload, dict)
+    blob = payload["text"]
+    assert isinstance(blob, dict)
+    ciphertext = blob["c"]
+    assert isinstance(ciphertext, str)
+    blob["c"] = _flip_ciphertext_b64(ciphertext)
+
+
+async def _two_call_utterances(keys: InMemoryKeyStore) -> InMemoryEventLog:
+    await keys.create("call_a")
+    await keys.create("call_b")
+    log = InMemoryEventLog(keys)
+    for call_id, text in (("call_a", "alpha text"), ("call_b", "beta text")):
+        await log.record_caller_utterance(
+            call_id=call_id,
+            tenant_id="tenant_a",
+            at=NOW,
+            turn=1,
+            text=text,
+            clinical_class=False,
+        )
+    return log
+
+
+async def test_tampered_call_a_does_not_stop_read_of_b(keys: InMemoryKeyStore) -> None:
+    log = await _two_call_utterances(keys)
+    _tamper_stored_text(log._stored[0])
+    events = await log.read("call_b")
+    assert len(events) == 1
+    assert events[0].call_id == "call_b"
+    assert events[0].payload["text"] == "beta text"
+    with pytest.raises(InvalidCiphertextError):
+        await log.read()
+
+
+async def test_unknown_key_for_call_a_does_not_stop_read_of_b(keys: InMemoryKeyStore) -> None:
+    log = await _two_call_utterances(keys)
+    del keys._live["call_a"]
+    events = await log.read("call_b")
+    assert len(events) == 1
+    assert events[0].call_id == "call_b"
+    assert events[0].payload["text"] == "beta text"
+    with pytest.raises(UnknownCallKeyError):
+        await log.read()
 
 
 async def test_shred_leaves_kinds_and_timings_readable(keys: InMemoryKeyStore) -> None:
@@ -410,8 +466,7 @@ async def test_tampered_jsonl_ciphertext_raises(keys: InMemoryKeyStore, tmp_path
         clinical_class=False,
     )
     line = json.loads(path.read_text(encoding="utf-8"))
-    blob = line["payload"]["text"]["c"]
-    line["payload"]["text"]["c"] = blob[:-2] + ("A" if blob[-1] != "A" else "B") + blob[-1]
+    line["payload"]["text"]["c"] = _flip_ciphertext_b64(line["payload"]["text"]["c"])
     path.write_text(json.dumps(line) + "\n", encoding="utf-8")
     with pytest.raises(InvalidCiphertextError):
         await log.read()

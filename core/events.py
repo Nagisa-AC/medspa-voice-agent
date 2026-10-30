@@ -255,9 +255,9 @@ class EventLogBase(ABC):
     async def read(self, call_id: str | None = None) -> tuple[Event, ...]:
         events: list[Event] = []
         for record in await self._load():
-            event = await unseal(self._keys, record)
-            if call_id is None or event.call_id == call_id:
-                events.append(event)
+            if call_id is not None and record.get("call_id") != call_id:
+                continue
+            events.append(await unseal(self._keys, record))
         return tuple(events)
 
     async def _commit(self, draft: EventDraft) -> None:
@@ -286,6 +286,12 @@ class InMemoryEventLog(EventLogBase):
 
 @final
 class JsonlEventLog(EventLogBase):
+    """Single-process only with InMemoryKeyStore.
+
+    A restart makes earlier calls' sensitive fields unreadable until the durable
+    key store in M4.
+    """
+
     def __init__(self, path: Path, keys: KeyStore) -> None:
         super().__init__(keys)
         self._path = path
