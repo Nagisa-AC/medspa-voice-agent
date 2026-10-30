@@ -1,7 +1,10 @@
-"""check_availability: spoken times for the caller, structured slots for the model."""
+"""check_availability and book: spoken lines for the caller, structured results for the model."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,7 +22,16 @@ from core.tenant import (
     Tenant,
     resolve_service,
 )
-from integrations.booking import BookingAdapter, Slot
+from integrations.booking import (
+    BookingAdapter,
+    IdempotencyConflict,
+    Patient,
+    Slot,
+    SlotTaken,
+    Unavailable,
+    UnknownBooking,
+)
+from tools.pricing import format_money
 
 HAVE_ONE = "I have {a}."
 HAVE_TWO = "I have {a} or {b}."
@@ -28,11 +40,31 @@ EMPTY = "I don't have anything in the next two weeks."
 UNKNOWN_PREFIX = "I don't have that on the list. I can book a consult. "
 UNKNOWN_EMPTY = "I don't have that on the list. I don't have anything in the next two weeks."
 AMBIGUOUS = "Which were you asking about, {names}?"
+CONFIRM = "Just to confirm: {what} on {time}. Should I go ahead and book that?"
+CONFIRM_BARE = "Just to confirm — should I go ahead and book that?"
+NEED_NAME = "I need a name for the booking."
+NEED_PHONE = "Can I get a good number to reach you at?"
+NO_OFFER = "Let me find you a time. What would you like to book?"
+NOT_HELD = "I don't have that time held. "
+TAKEN = "That time was just taken. "
+UNAVAILABLE = "That time isn't open anymore. "
+DST_COLLISION = "That clock time matched more than one opening. "
+REVIEW = "I've got your request in and someone from the team will confirm with you."
+SUCCESS = "You're all set for {what} on {time}."
+DEPOSIT = " Just so you know, there's a {amount} deposit for this treatment."
 _ORDINAL_SUFFIX = {1: "st", 2: "nd", 3: "rd"}
+_E164 = re.compile(r"\+[1-9]\d{1,14}")
+_MIN_SECRET = 32
 
 
 @dataclass(frozen=True)
 class CheckAvailabilityResult:
+    say: str
+    model: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class BookResult:
     say: str
     model: Mapping[str, object]
 
@@ -238,3 +270,218 @@ async def _list(
         earliest=earliest,
         limit=limit,
     )
+
+
+def normalize_phone(raw: str) -> str | None:
+    """Return E.164, or None if the input cannot be a reachable number."""
+    text = raw.strip()
+    if _E164.fullmatch(text):
+        if text.startswith("+1"):
+            return _nanp_from_national(text[2:])
+        return text
+    digits = re.sub(r"\D", "", text)
+    if len(digits) == 10:
+        return _nanp_from_national(digits)
+    if len(digits) == 11 and digits.startswith("1"):
+        return _nanp_from_national(digits[1:])
+    return None
+
+
+def _nanp_from_national(national: str) -> str | None:
+    if len(national) != 10 or national[0] in "01":
+        return None
+    return f"+1{national}"
+
+
+async def book(
+    tenant: Tenant,
+    state: CallState,
+    adapter: BookingAdapter,
+    *,
+    slot_start_iso: str,
+    patient_name: str,
+    patient_phone: str,
+    confirmed: bool,
+    extract: NumberExtractor,
+    now: datetime,
+    secret: bytes,
+) -> BookResult:
+    """Book one offered slot. Admit the say. Model payload is flags only."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    if len(secret) < _MIN_SECRET:
+        raise ValueError("secret must be at least 32 bytes")
+    hits = _matching_offers(state, slot_start_iso, tenant.tz)
+    if confirmed is not True:
+        if len(hits) == 1:
+            say = CONFIRM.format(
+                what=_spoken_what(tenant, hits[0].service_id),
+                time=format_slot_time(hits[0].start, tenant.tz),
+            )
+        else:
+            say = CONFIRM_BARE
+        return _finish(state, say, _flags(booked=False, needs_review=False, retry=False), extract)
+    name = patient_name.strip()
+    if not name:
+        return _finish(
+            state, NEED_NAME, _flags(booked=False, needs_review=False, retry=False), extract
+        )
+    phone = normalize_phone(patient_phone)
+    if phone is None:
+        return _finish(
+            state, NEED_PHONE, _flags(booked=False, needs_review=False, retry=False), extract
+        )
+    if len(hits) != 1:
+        if not state.offered_slots:
+            return _finish(
+                state, NO_OFFER, _flags(booked=False, needs_review=False, retry=True), extract
+            )
+        prefix = DST_COLLISION if len(hits) > 1 else NOT_HELD
+        times = await _relist(tenant, state, adapter, state.offered_slots[0].service_id, now)
+        return _finish(
+            state, prefix + times, _flags(booked=False, needs_review=False, retry=True), extract
+        )
+    offered = hits[0]
+    slot = Slot(
+        start=offered.start,
+        end=offered.end,
+        provider_id=offered.provider_id,
+        room_id=offered.room_id,
+        version=offered.version,
+    )
+    key = _idempotency_key(secret, tenant.id, phone, offered.service_id, offered.start)
+    patient = Patient(name=name, phone=phone)
+    try:
+        created = await adapter.create_booking(idempotency_key=key, slot=slot, patient=patient)
+    except SlotTaken:
+        times = await _relist(tenant, state, adapter, offered.service_id, now)
+        return _finish(
+            state, TAKEN + times, _flags(booked=False, needs_review=False, retry=True), extract
+        )
+    except Unavailable:
+        times = await _relist(tenant, state, adapter, offered.service_id, now)
+        return _finish(
+            state,
+            UNAVAILABLE + times,
+            _flags(booked=False, needs_review=False, retry=True),
+            extract,
+        )
+    except IdempotencyConflict:
+        state.idempotency_keys.add(key)
+        return _finish(state, REVIEW, _flags(booked=False, needs_review=True, retry=False), extract)
+    state.idempotency_keys.add(key)
+    try:
+        returned = await adapter.get_booking(created.id)
+    except UnknownBooking:
+        return _finish(state, REVIEW, _flags(booked=False, needs_review=True, retry=False), extract)
+    if returned.slot.identity != created.slot.identity or returned.id != created.id:
+        return _finish(state, REVIEW, _flags(booked=False, needs_review=True, retry=False), extract)
+    what = _spoken_what(tenant, offered.service_id)
+    time = format_slot_time(returned.slot.start, tenant.tz)
+    say = SUCCESS.format(what=what, time=time) + _deposit_clause(tenant, offered.service_id)
+    return _finish(state, say, _flags(booked=True, needs_review=False, retry=False), extract)
+
+
+def _finish(
+    state: CallState,
+    say: str,
+    model: Mapping[str, object],
+    extract: NumberExtractor,
+) -> BookResult:
+    admit_numbers(state, say, extract)
+    return BookResult(say=say, model=model)
+
+
+def _flags(*, booked: bool, needs_review: bool, retry: bool) -> Mapping[str, object]:
+    return MappingProxyType(
+        {
+            "booked": booked,
+            "needs_review": needs_review,
+            "retry": retry,
+            "already_spoken": True,
+        }
+    )
+
+
+def _matching_offers(state: CallState, slot_start_iso: str, tz: ZoneInfo) -> list[OfferedSlot]:
+    canonical = _canonical_local_iso(slot_start_iso, tz)
+    if canonical is None:
+        return []
+    return [item for item in state.offered_slots if _local_naive_iso(item.start, tz) == canonical]
+
+
+def _canonical_local_iso(slot_start_iso: str, tz: ZoneInfo) -> str | None:
+    text = slot_start_iso.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        utc = _naive_local_to_utc(parsed, tz)
+        if utc is None:
+            return None
+        parsed = utc
+    return _local_naive_iso(parsed, tz)
+
+
+def _idempotency_key(
+    secret: bytes, tenant_id: str, phone: str, service_id: str, start: datetime
+) -> str:
+    payload = b"\x1f".join(
+        (
+            tenant_id.encode(),
+            phone.encode(),
+            service_id.encode(),
+            start.astimezone(UTC).isoformat().encode(),
+        )
+    )
+    return hmac.new(secret, payload, hashlib.sha256).hexdigest()
+
+
+def _spoken_what(tenant: Tenant, service_id: str) -> str:
+    if service_id == CONSULT_ID:
+        return "a consult"
+    for service in tenant.services:
+        if service.id == service_id:
+            if _books_as_consult(service):
+                return "a consult"
+            return service.name
+    return "a consult"
+
+
+def _deposit_clause(tenant: Tenant, service_id: str) -> str:
+    for service in tenant.services:
+        if (
+            service.id == service_id
+            and service.deposit_required
+            and service.deposit_amount is not None
+        ):
+            return DEPOSIT.format(amount=format_money(service.deposit_amount))
+    return ""
+
+
+def _bookable_for(tenant: Tenant, service_id: str) -> Service | Consult:
+    if service_id == CONSULT_ID:
+        return tenant.consult
+    for service in tenant.services:
+        if service.id == service_id:
+            if _books_as_consult(service):
+                return tenant.consult
+            return service
+    return tenant.consult
+
+
+async def _relist(
+    tenant: Tenant,
+    state: CallState,
+    adapter: BookingAdapter,
+    service_id: str,
+    now: datetime,
+) -> str:
+    slots = await _list(adapter, _bookable_for(tenant, service_id), service_id, now, 3)
+    _store_offers(state, service_id, slots)
+    return _have_line(tuple(format_slot_time(slot.start, tenant.tz) for slot in slots))
