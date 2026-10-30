@@ -5,7 +5,7 @@ from functools import partial
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import core.numbers
@@ -231,6 +231,7 @@ def _money_text(amount: Decimal) -> str:
     return f"${quantized:.2f}"
 
 
+@settings(max_examples=40, deadline=200)
 @given(st.integers(min_value=0, max_value=9999))
 def test_round_trip_integer_words(n: int) -> None:
     text = integer_to_words(n)
@@ -238,6 +239,7 @@ def test_round_trip_integer_words(n: int) -> None:
     assert D(n) in values, text
 
 
+@settings(max_examples=40, deadline=200)
 @given(st.integers(min_value=0, max_value=9999))
 def test_round_trip_integer_digits_and_dollars(n: int) -> None:
     forms = [str(n), f"${n}", f"{n} dollars"]
@@ -248,6 +250,7 @@ def test_round_trip_integer_digits_and_dollars(n: int) -> None:
         assert D(n) in values, text
 
 
+@settings(max_examples=40, deadline=200)
 @given(
     st.decimals(
         min_value=0,

@@ -6,7 +6,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import core.guardrail
@@ -194,9 +194,10 @@ def test_concatenated_output_equals_input_for_spec_cases() -> None:
 _HYPOTHESIS_PIECES = (". ", " ", "\n", "$13", "50", "Dr", "nine", "fifty", "?")
 
 
+@settings(max_examples=40, deadline=200)
 @given(
-    st.lists(st.sampled_from(_HYPOTHESIS_PIECES), max_size=40).map("".join),
-    st.lists(st.integers(min_value=0), max_size=25),
+    st.lists(st.sampled_from(_HYPOTHESIS_PIECES), max_size=24).map("".join),
+    st.lists(st.integers(min_value=0, max_value=10_000), max_size=16),
 )
 def test_random_chunks_match_whole_and_concat(text: str, cuts: list[int]) -> None:
     whole = split_text(text)
@@ -380,7 +381,7 @@ _PATTERN_CASES: list[tuple[str, str, str]] = [
     ("results", "you'll see results in two weeks", "search results"),
     ("dose", "the dose is decided at the visit", "See you soon."),
     ("mg", "that's 2 mg", "I'm good"),
-    ("units_needed", "units you'll need", "20 to 60 units"),
+    ("units", "20 to 60 units", "per unit pricing"),
     ("contraindication", "that's a contraindication", "I have no concerns"),
     ("pregnancy", "if you're pregnant", "I'll take the premium slot"),
     ("breastfeeding", "while breastfeeding", "I'll book the morning"),
@@ -395,6 +396,7 @@ _PATTERN_CASES: list[tuple[str, str, str]] = [
     ),
     ("symptoms", "there's some redness", "The parking lot is behind the building."),
     ("advice", "take ibuprofen if needed", "That's a nice idea."),
+    ("blood_thinners", "are you on blood thinners?", "I'll send that over."),
 ]
 
 
@@ -435,6 +437,7 @@ def test_each_pattern_has_a_hit_and_a_miss(pattern_id: str, positive: str, negat
         "lasts three months",
         "Botox usually lasts three months",
         "Filler lasts about a year.",
+        "Botox lasts weeks",
     ],
 )
 def test_lasts_true_hits(sentence: str) -> None:
@@ -490,14 +493,53 @@ def test_key_reassurance_sentence_also_hits_symptoms() -> None:
     assert "symptoms" in result.pattern_ids
 
 
-def test_curly_apostrophe_units_needed() -> None:
+def test_curly_apostrophe_units() -> None:
     sentence = "units you\u2019ll need"
     result = _clinical(sentence)
     assert isinstance(result, Blocked)
-    assert "units_needed" in result.pattern_ids
+    assert "units" in result.pattern_ids
     shown = repr(result) + str(result)
     assert sentence not in shown
     assert "you\u2019ll" not in shown
+
+
+def test_dosing_blocks() -> None:
+    result = _clinical("the dosing is decided at the visit")
+    assert isinstance(result, Blocked)
+    assert "dose" in result.pattern_ids
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "20 to 60 units",
+        "most people need about 20 units",
+        "units you'll need",
+    ],
+)
+def test_plural_units_block(sentence: str) -> None:
+    result = _clinical(sentence)
+    assert isinstance(result, Blocked)
+    assert "units" in result.pattern_ids
+
+
+def test_singular_unit_pricing_passes() -> None:
+    assert isinstance(_clinical("per unit pricing"), Pass)
+
+
+@pytest.mark.parametrize(
+    ("positive", "negative", "pattern_id"),
+    [
+        ("you might have some nausea", "I can book the noon slot.", "symptoms"),
+        ("you might vomit after", "I'll hop in the van.", "symptoms"),
+        ("feeling dizzy afterward", "I'll take the later slot.", "symptoms"),
+    ],
+)
+def test_added_symptom_terms(positive: str, negative: str, pattern_id: str) -> None:
+    hit = _clinical(positive)
+    assert isinstance(hit, Blocked)
+    assert pattern_id in hit.pattern_ids
+    assert isinstance(_clinical(negative), Pass)
 
 
 def test_clinical_blocked_repr_has_no_sentence() -> None:

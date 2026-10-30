@@ -25,17 +25,17 @@ patterns:
   - id: bruise
     regex: '\bbruise(?:s|d)?\b|\bbruising\b'
   - id: lasts
-    regex: '(?<!\bat\s)\blast(?:s|ed|ing)?\b(?!\s+(?:name|weekend|weeks?|time|visit|appointment|night|month|year|call)\b)'
+    regex: '\blast(?:s|ed|ing)\b|(?<!\bat\s)\blast\b(?!\s+(?:name|weekend|weeks?|time|visit|appointment|night|month|year|call)\b)'
   - id: wears_off
     regex: '\bwears?\s+off\b'
   - id: results
     regex: '(?<!\bsearch\s)\bresults?\b'
   - id: dose
-    regex: '\bdos(?:e|es|age)\b'
+    regex: '\bdos(?:e|es|age|ing)\b'
   - id: mg
     regex: '\bmg\b'
-  - id: units_needed
-    regex: '\bunits\s+you(?:''ll|\s+will)\s+need\b'
+  - id: units
+    regex: '\bunits\b'
   - id: contraindication
     regex: '\bcontraindicat\w*\b'
   - id: pregnancy
@@ -53,6 +53,8 @@ patterns:
   - id: reassurance
     regex: '\bnormal\b|\bnothing\s+to\s+worry\s+about\b|\bgoes?\s+away\b|\bshould\s+resolve\b|\bwill\s+fade\b|\byou(?:''ll|\s+will)\s+be\s+fine\b'
   - id: symptoms
-    regex: '\bheadache\b|\bredness\b|\btender\w*\b|\bitch\w*\b|\blump\w*\b|\bdroop\w*\b|\bptosis\b|\basymmetr\w*\b|\binfect\w*\b|\bblister\w*\b|\bnodule\w*\b|\bvision\b'
+    regex: '\bheadache\b|\bredness\b|\btender\w*\b|\bitch\w*\b|\blump\w*\b|\bdroop\w*\b|\bptosis\b|\basymmetr\w*\b|\binfect\w*\b|\bblister\w*\b|\bnodule\w*\b|\bvision\b|\bnausea\b|\bvomit\w*\b|\bdizz\w*\b'
   - id: advice
     regex: '\bice\b|\bibuprofen\b|\btylenol\b|\badvil\b|\baspirin\b|\barnica\b|\bantihistamine\w*\b|\bmedication\w*\b|\bprescri\w*\b'
+  - id: blood_thinners
+    regex: '\bblood\s+thinners?\b'
