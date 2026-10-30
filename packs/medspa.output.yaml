@@ -1,0 +1,60 @@
+# Output clinical patterns. Applied to model sentences only.
+# Over-block is cheaper than a leak. FAQ and tool say strings skip this check.
+deflect: "That's a great question for our injector. I can book you a consult, or have them call you back."
+patterns:
+  - id: side_effects
+    regex: '\bside effects?\b'
+  - id: risks
+    regex: '\brisks?\b'
+  - id: safe
+    regex: '\bsafety\b|\bsafe\b(?!\s+to\s+say)'
+  - id: pain
+    regex: '\bpainful\b|\bpain\b(?!\s+in\s+the\s+neck)'
+  - id: hurt
+    regex: '\bhurts?\b'
+  - id: numb
+    regex: '\bnumb(?:ing)?\b'
+  - id: downtime
+    regex: '\bdowntime\b'
+  - id: recovery
+    regex: '\brecovery\b'
+  - id: heal
+    regex: '\bheal(?:s|ing)?\b'
+  - id: swelling
+    regex: '\bswelling\b'
+  - id: bruise
+    regex: '\bbruise(?:s|d)?\b|\bbruising\b'
+  - id: lasts
+    regex: '\blast(?:s|ed|ing)\b|(?<!\bat\s)\blast\b(?!\s+(?:name|weekend|weeks?|time|visit|appointment|night|month|year|call)\b)'
+  - id: wears_off
+    regex: '\bwears?\s+off\b'
+  - id: results
+    regex: '(?<!\bsearch\s)\bresults?\b'
+  - id: dose
+    regex: '\bdos(?:e|es|age|ing)\b'
+  - id: mg
+    regex: '\bmg\b'
+  - id: units
+    regex: '\bunits\b'
+  - id: contraindication
+    regex: '\bcontraindicat\w*\b'
+  - id: pregnancy
+    regex: '\bpregnan\w*\b'
+  - id: breastfeeding
+    regex: '\bbreastfeed\w*\b'
+  - id: allergy
+    regex: '\ballerg\w*\b'
+  - id: candidate
+    regex: '\bcandidate\b'
+  - id: aftercare
+    regex: '\baftercare\b'
+  - id: avoid_aftercare
+    regex: '\bavoid\s+(?:exercise|alcohol|sun)\b'
+  - id: reassurance
+    regex: '\bnormal\b|\bnothing\s+to\s+worry\s+about\b|\bgoes?\s+away\b|\bshould\s+resolve\b|\bwill\s+fade\b|\byou(?:''ll|\s+will)\s+be\s+fine\b'
+  - id: symptoms
+    regex: '\bheadache\b|\bredness\b|\btender\w*\b|\bitch\w*\b|\blump\w*\b|\bdroop\w*\b|\bptosis\b|\basymmetr\w*\b|\binfect\w*\b|\bblister\w*\b|\bnodule\w*\b|\bvision\b|\bnausea\b|\bvomit\w*\b|\bdizz\w*\b'
+  - id: advice
+    regex: '\bice\b|\bibuprofen\b|\btylenol\b|\badvil\b|\baspirin\b|\barnica\b|\bantihistamine\w*\b|\bmedication\w*\b|\bprescri\w*\b'
+  - id: blood_thinners
+    regex: '\bblood\s+thinners?\b'
