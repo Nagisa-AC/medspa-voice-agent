@@ -19,8 +19,15 @@ GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(20
 NOW = datetime(2026, 10, 29, 14, 0, tzinfo=UTC)
 
 
-def pairs(text: str, extra: tuple[str, ...] = ()) -> list[tuple[Decimal, str]]:
-    return [(found.value, found.kind) for found in find_numbers(text, extra_price_words=extra)]
+def pairs(
+    text: str,
+    extra: tuple[str, ...] = (),
+    service: tuple[str, ...] = (),
+) -> list[tuple[Decimal, str]]:
+    return [
+        (found.value, found.kind)
+        for found in find_numbers(text, extra_price_words=extra, service_words=service)
+    ]
 
 
 # --------------------------------------------------------------------------- table
@@ -172,6 +179,26 @@ def test_glow_price_unit_phrase_promotes() -> None:
     extra = ("per unit", "per syringe")
     assert pairs("12 per unit", extra) == [(D(12), "price_context")]
     assert pairs("900 per syringe", extra) == [(D(900), "price_context")]
+
+
+def test_service_words_promote_non_clock_numbers() -> None:
+    assert pairs("Botox is 12", service=("Botox",)) == [(D(12), "price_context")]
+
+
+def test_service_words_do_not_promote_times() -> None:
+    assert pairs("So that's Botox Thursday at 2 PM?", service=("Botox",)) == [(D(2), "plain")]
+
+
+def test_service_words_do_not_promote_ordinals_or_clock_times() -> None:
+    assert pairs("Botox on the 12th at 2:30", service=("Botox",)) == [
+        (D(12), "plain"),
+        (D(2), "plain"),
+        (D(30), "plain"),
+    ]
+
+
+def test_unit_phrase_still_promotes_times() -> None:
+    assert pairs("two thirty a unit") == [(D(2), "price_context"), (D(30), "price_context")]
 
 
 def test_span_matches_source() -> None:

@@ -299,6 +299,35 @@ def _fold_plural(token: str) -> str:
     return token
 
 
+@dataclass(frozen=True)
+class PriceWords:
+    extra_price_words: tuple[str, ...]
+    service_words: tuple[str, ...]
+
+
+def extra_price_words(tenant: Tenant) -> PriceWords:
+    """Unit phrases plus service names/aliases, for binding onto find_numbers."""
+    units = _unique_phrases(service.price_unit for service in tenant.services)
+    names = _unique_phrases(
+        item for service in tenant.services for item in (service.name, *service.aliases)
+    )
+    return PriceWords(extra_price_words=units, service_words=names)
+
+
+def _unique_phrases(items: Iterable[str | None]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    phrases: list[str] = []
+    for item in items:
+        if item is None or not item.strip():
+            continue
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        phrases.append(item)
+    return tuple(phrases)
+
+
 # --------------------------------------------------------------------------- resolution
 
 
