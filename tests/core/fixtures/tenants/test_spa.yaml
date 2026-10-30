@@ -39,6 +39,12 @@ services:
     quotable: false
     consult_required: true
 
+consult:
+  name: Consult
+  duration_min: 30
+  room_type: room_a
+  provider_types: [P1]
+
 facts:
   hours: "Weekdays 9 to 5."
 policies:

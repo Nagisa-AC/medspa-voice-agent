@@ -77,6 +77,20 @@ def add_service(d: Data) -> None:
     d["services"].append(extra)
 
 
+def consult(d: Data) -> Data:
+    block = d["consult"]
+    assert isinstance(block, dict)
+    return block
+
+
+def add_consult_service(d: Data) -> None:
+    extra = copy.deepcopy(d["services"][0])
+    extra["id"] = "consult"
+    extra["name"] = "Reserved Name"
+    extra["aliases"] = ["reserved name"]
+    d["services"].append(extra)
+
+
 def two(*patches: Callable[[Data], None]) -> Callable[[Data], None]:
     def apply(d: Data) -> None:
         for p in patches:
@@ -184,6 +198,10 @@ BROKEN: list[tuple[str, Callable[[Data], None], str]] = [
     ("max_turns_zero", set_(top, "max_turns", 0), "max_turns"),
     ("max_turns_text", set_(top, "max_turns", "10"), "max_turns"),
     ("no_services", set_(top, "services", []), "services"),
+    ("no_consult", drop(top, "consult"), "consult"),
+    ("consult_no_name", drop(consult, "name"), "consult.name"),
+    ("consult_empty_providers", set_(consult, "provider_types", []), "consult.provider_types"),
+    ("service_id_consult", add_consult_service, "services[3].id"),
 ]
 
 
@@ -418,4 +436,6 @@ def test_glow_loads() -> None:
     tox = glow.services[0]
     assert (tox.price_min, tox.price_max) == (Decimal(13), Decimal(15))
     assert glow.services[2].quotable is False
+    assert glow.consult.duration_min == 30
+    assert glow.consult.room_type == "injectable"
     assert glow.transfer_tiers[0].live_hours is not None

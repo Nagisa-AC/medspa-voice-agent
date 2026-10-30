@@ -4,7 +4,7 @@ import dataclasses
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -296,7 +296,16 @@ async def test_store_mutation_without_save_is_lost() -> None:
     s.allowed_amounts.add(Decimal(999))
     loaded = await store.get("call_1")
     assert loaded is not None
-    loaded.offered_slots.append(OfferedSlot("alpha", NOW, None))
+    loaded.offered_slots.append(
+        OfferedSlot(
+            service_id="alpha",
+            start=NOW,
+            end=NOW + timedelta(minutes=30),
+            provider_id="p1",
+            room_id="r1",
+            version=0,
+        )
+    )
     again = await store.get("call_1")
     assert again is not None
     assert again.turn_count == 0
