@@ -1,8 +1,13 @@
-"""Sentence buffer for model output. Number and clinical checks land in later tasks."""
+"""Sentence buffer and number check on model sentences. Clinical check lands later."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Set
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal
+
+from core.numbers import Found
 
 _ELLIPSIS = "\u2026"
 _ASCII_ELLIPSIS = "..."
@@ -112,3 +117,77 @@ def _is_abbreviation(buf: str, period: int) -> bool:
     if word not in _SIMPLE_ABBREVS:
         return False
     return i < 0 or not buf[i].isalnum()
+
+
+# --------------------------------------------------------------------------- number check
+
+
+@dataclass(frozen=True)
+class Pass:
+    pass
+
+
+NumberBlockReason = Literal["unquoted_amount", "unquoted_price", "unknown_number"]
+NumberExtractor = Callable[[str], Iterable[Found]]
+
+
+@dataclass(frozen=True)
+class Blocked:
+    reason: NumberBlockReason
+    blocked_amount: int
+    blocked_price_context: int
+    blocked_plain: int
+    check: Literal["numbers"] = "numbers"
+
+    def __repr__(self) -> str:
+        return (
+            f"Blocked(check={self.check!r}, reason={self.reason!r}, "
+            f"blocked_amount={self.blocked_amount}, "
+            f"blocked_price_context={self.blocked_price_context}, "
+            f"blocked_plain={self.blocked_plain})"
+        )
+
+    def __str__(self) -> str:
+        return repr(self)
+
+
+def check_numbers(
+    sentence: str,
+    *,
+    allowed_amounts: Set[Decimal],
+    allowed_numbers: Set[Decimal],
+    extract: NumberExtractor,
+) -> Pass | Blocked:
+    """Block unquoted amounts, prices, and unknown plains. Result holds counts only."""
+    n_amount = 0
+    n_price = 0
+    n_plain = 0
+    for found in extract(sentence):
+        if found.kind in ("amount", "price_context"):
+            if found.value not in allowed_amounts:
+                if found.kind == "amount":
+                    n_amount += 1
+                else:
+                    n_price += 1
+        elif found.value not in allowed_numbers and not _small_plain(found.value):
+            n_plain += 1
+    if n_amount == 0 and n_price == 0 and n_plain == 0:
+        return Pass()
+    if n_amount:
+        reason: NumberBlockReason = "unquoted_amount"
+    elif n_price:
+        reason = "unquoted_price"
+    else:
+        reason = "unknown_number"
+    return Blocked(
+        reason=reason,
+        blocked_amount=n_amount,
+        blocked_price_context=n_price,
+        blocked_plain=n_plain,
+    )
+
+
+def _small_plain(value: Decimal) -> bool:
+    if value != value.to_integral_value():
+        return False
+    return Decimal(0) <= value <= Decimal(12)

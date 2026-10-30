@@ -157,12 +157,19 @@ class _Hit:
     tok_lo: int
     tok_hi: int
     marked_amount: bool
+    clock_or_ordinal: bool = False
 
 
-def find_numbers(text: str, *, extra_price_words: Iterable[str] = ()) -> list[Found]:
-    """Return every number in `text`, left to right. Bind extra_price_words at the call site."""
+def find_numbers(
+    text: str,
+    *,
+    extra_price_words: Iterable[str] = (),
+    service_words: Iterable[str] = (),
+) -> list[Found]:
+    """Return every number in `text`, left to right. Bind extras at the call site."""
     tokens = tokenize(text)
     extras = tuple(p for p in extra_price_words if p.strip())
+    services = tuple(p for p in service_words if p.strip())
     hits: list[_Hit] = []
     i = 0
     while i < len(tokens):
@@ -173,7 +180,7 @@ def find_numbers(text: str, *, extra_price_words: Iterable[str] = ()) -> list[Fo
         batch, nxt = matched
         hits.extend(batch)
         i = nxt
-    return _classify(tokens, hits, extras)
+    return _classify(tokens, hits, extras, services)
 
 
 def tokenize(text: str) -> list[Token]:
@@ -281,6 +288,7 @@ def _hit(
     hi: int,
     *,
     marked_amount: bool,
+    clock_or_ordinal: bool = False,
     start: int | None = None,
     end: int | None = None,
 ) -> _Hit:
@@ -291,6 +299,7 @@ def _hit(
         tok_lo=lo,
         tok_hi=hi,
         marked_amount=marked_amount,
+        clock_or_ordinal=clock_or_ordinal,
     )
 
 
@@ -449,7 +458,7 @@ def _try_time(tokens: list[Token], i: int) -> tuple[list[_Hit], int] | None:
         return _time_hits(h, m, tokens, i, j, k), k
     ampm = _am_pm(tokens, j)
     if ampm is not None:
-        return [_hit(Decimal(h), tokens, i, ampm, marked_amount=False)], ampm
+        return [_hit(Decimal(h), tokens, i, ampm, marked_amount=False, clock_or_ordinal=True)], ampm
     return None
 
 
@@ -461,8 +470,12 @@ def _time_hits(
     minute_i: int,
     end_i: int,
 ) -> list[_Hit]:
-    hour_hit = _hit(Decimal(hour), tokens, hour_i, hour_i + 1, marked_amount=False)
-    minute_hit = _hit(Decimal(minute), tokens, minute_i, minute_i + 1, marked_amount=False)
+    hour_hit = _hit(
+        Decimal(hour), tokens, hour_i, hour_i + 1, marked_amount=False, clock_or_ordinal=True
+    )
+    minute_hit = _hit(
+        Decimal(minute), tokens, minute_i, minute_i + 1, marked_amount=False, clock_or_ordinal=True
+    )
     if end_i > minute_i + 1:
         minute_hit = _hit(
             Decimal(minute),
@@ -470,6 +483,7 @@ def _time_hits(
             minute_i,
             end_i,
             marked_amount=False,
+            clock_or_ordinal=True,
             start=tokens[minute_i].start,
             end=tokens[end_i - 1].end,
         )
@@ -596,20 +610,29 @@ def _try_word_number(tokens: list[Token], i: int) -> tuple[list[_Hit], int] | No
 def _try_ordinal(tokens: list[Token], i: int) -> tuple[list[_Hit], int] | None:
     token = tokens[i]
     if token.kind == "ordinal" and token.number is not None:
-        return [_hit(token.number, tokens, i, i + 1, marked_amount=False)], i + 1
+        return [_hit(token.number, tokens, i, i + 1, marked_amount=False, clock_or_ordinal=True)], (
+            i + 1
+        )
     if token.kind != "word":
         return None
     if token.norm in _ORDINAL_WORDS:
-        return [_hit(Decimal(_ORDINAL_WORDS[token.norm]), tokens, i, i + 1, marked_amount=False)], (
-            i + 1
-        )
+        return [
+            _hit(
+                Decimal(_ORDINAL_WORDS[token.norm]),
+                tokens,
+                i,
+                i + 1,
+                marked_amount=False,
+                clock_or_ordinal=True,
+            )
+        ], (i + 1)
     tens = _TENS.get(token.norm)
     if tens is None:
         return None
     j = _skip_hyphen(tokens, i + 1)
     if j < len(tokens) and tokens[j].kind == "word" and tokens[j].norm in _ORDINAL_ONES:
         value = Decimal(tens + _ORDINAL_ONES[tokens[j].norm])
-        return [_hit(value, tokens, i, j + 1, marked_amount=False)], j + 1
+        return [_hit(value, tokens, i, j + 1, marked_amount=False, clock_or_ordinal=True)], j + 1
     return None
 
 
@@ -761,7 +784,12 @@ def _has_currency_after(tokens: list[Token], hit: _Hit) -> bool:
     return False
 
 
-def _in_price_window(tokens: list[Token], hit: _Hit, extras: tuple[str, ...]) -> bool:
+def _in_price_window(
+    tokens: list[Token],
+    hit: _Hit,
+    extras: tuple[str, ...],
+    services: tuple[str, ...],
+) -> bool:
     if _has_unit_price(tokens, hit.tok_lo, hit.tok_hi):
         return True
     if _has_each_or_apiece(tokens, hit.tok_hi):
@@ -770,15 +798,24 @@ def _in_price_window(tokens: list[Token], hit: _Hit, extras: tuple[str, ...]) ->
         return True
     if _has_left_cue(tokens, hit.tok_lo):
         return True
-    return any(_window_has_phrase(tokens, hit.tok_lo, hit.tok_hi, phrase) for phrase in extras)
+    if any(_window_has_phrase(tokens, hit.tok_lo, hit.tok_hi, phrase) for phrase in extras):
+        return True
+    if hit.clock_or_ordinal:
+        return False
+    return any(_window_has_phrase(tokens, hit.tok_lo, hit.tok_hi, phrase) for phrase in services)
 
 
-def _classify(tokens: list[Token], hits: list[_Hit], extras: tuple[str, ...]) -> list[Found]:
+def _classify(
+    tokens: list[Token],
+    hits: list[_Hit],
+    extras: tuple[str, ...],
+    services: tuple[str, ...],
+) -> list[Found]:
     found: list[Found] = []
     for hit in hits:
         if hit.marked_amount or _has_currency_after(tokens, hit):
             kind: NumberKind = "amount"
-        elif _in_price_window(tokens, hit, extras):
+        elif _in_price_window(tokens, hit, extras, services):
             kind = "price_context"
         else:
             kind = "plain"
