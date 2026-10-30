@@ -6,7 +6,7 @@ tripwires:
     script: "If this is an emergency, please hang up and call 911 now."
     patterns:
       - id: cant_breathe
-        regex: '\b(?:can''t|cannot|can not) (?:breathe|catch my breath)\b'
+        regex: '\b(?:cant|cannot|can not) (?:breathe|catch my breath)\b'
       - id: trouble_breathing
         regex: '\b(?:trouble|difficulty)(?:\s+to)?\s+breath(?:e|ing)\b'
       - id: hard_to_breathe
@@ -38,9 +38,9 @@ tripwires:
       - id: collapsed
         regex: '\bcollapsed\b'
       - id: wont_wake_up
-        regex: '\bw(?:on''t|ill not) wake up\b'
+        regex: '\bw(?:ont|ill not) wake up\b'
       - id: cant_see
-        regex: '\b(?:can''t|cannot|can not) see\b'
+        regex: '\b(?:cant|cannot|can not) see\b'
       - id: lost_vision
         regex: '\blost my vision\b'
       - id: went_blind
@@ -48,7 +48,7 @@ tripwires:
       - id: bleeding_a_lot
         regex: '\bbleeding a lot\b'
       - id: wont_stop_bleeding
-        regex: '\bw(?:on''t|ill not) stop bleeding\b'
+        regex: '\bw(?:ont|ill not) stop bleeding\b'
       - id: ambulance
         regex: '\bambulance\b'
       - id: emergency_room
@@ -153,4 +153,4 @@ tripwires:
       - id: incompetent
         regex: '\bincompetent\b'
       - id: this_is_a_joke
-        regex: '\bthis is a joke\b|\byou(?:''re| are) a joke\b'
+        regex: '\bthis is a joke\b|\byou(?:re| are) a joke\b'

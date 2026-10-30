@@ -27,7 +27,7 @@ _APOSTROPHES = str.maketrans(
         "\u201d": '"',
     }
 )
-_KEEP = frozenset("abcdefghijklmnopqrstuvwxyz0123456789'")
+_KEEP = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
 PACKS_DIR = Path(__file__).resolve().parents[1] / "packs"
 Outcome = Literal["HARD", "SOFT", "REPLY"]
 
@@ -119,7 +119,7 @@ _DURATION_BUDGET = Tripwire(
 
 def normalize_utterance(text: str) -> str:
     """Fold case, curly quotes, and punctuation so pack regexes see a stable string."""
-    folded = text.translate(_APOSTROPHES).lower()
+    folded = text.translate(_APOSTROPHES).lower().replace("'", "")
     chars: list[str] = []
     for char in folded:
         if char in _KEEP or char.isspace():
@@ -184,17 +184,21 @@ class PolicyEngine:
             hits.append(_DURATION_BUDGET)
         if not hits:
             return Continue()
+        clinical = any(trip.clinical_class for trip in hits)
         emergency = [trip for trip in hits if trip.name == "medical_emergency"]
         if emergency:
-            return self._commit(emergency[0])
+            return self._commit(emergency[0], clinical)
+        clinical_hards = [trip for trip in hits if trip.outcome == "HARD" and trip.clinical_class]
+        if clinical_hards:
+            return self._commit(clinical_hards[0], clinical)
         hards = [trip for trip in hits if trip.outcome == "HARD"]
         if hards:
-            return self._commit(hards[0])
+            return self._commit(hards[0], clinical)
         replies = [trip for trip in hits if trip.outcome == "REPLY"]
         if replies:
-            return self._reply(replies[0])
+            return self._reply(replies[0], clinical)
         softs = [trip for trip in hits if trip.outcome == "SOFT"]
-        return self._soft(softs, state)
+        return self._soft(softs, state, clinical)
 
     def matched_patterns(self, utterance: str) -> tuple[tuple[str, str], ...]:
         """(trip name, pattern id) pairs for tests. Never includes the utterance."""
@@ -214,16 +218,14 @@ class PolicyEngine:
                 hits.append(trip)
         return hits
 
-    def _reply(self, trip: Tripwire) -> Reply:
+    def _reply(self, trip: Tripwire, clinical: bool) -> Reply:
         script = trip.script
         if trip.name == "ai_identity_question":
             script = self._tenant.ai_identity_reply
-        return Reply(
-            trip=trip.name, outcome="REPLY", clinical_class=trip.clinical_class, script=script
-        )
+        return Reply(trip=trip.name, outcome="REPLY", clinical_class=clinical, script=script)
 
-    def _commit(self, trip: Tripwire) -> Commit:
-        return Commit(trip=trip.name, outcome="HARD", clinical_class=trip.clinical_class)
+    def _commit(self, trip: Tripwire, clinical: bool) -> Commit:
+        return Commit(trip=trip.name, outcome="HARD", clinical_class=clinical)
 
     def _commit_named(self, name: str) -> Commit:
         trip = self._by_name.get(name)
@@ -232,7 +234,7 @@ class PolicyEngine:
         outcome: Literal["HARD", "SOFT"] = "HARD" if trip.outcome == "HARD" else "SOFT"
         return Commit(trip=name, outcome=outcome, clinical_class=trip.clinical_class)
 
-    def _soft(self, softs: Sequence[Tripwire], state: CallState) -> Arm | Commit:
+    def _soft(self, softs: Sequence[Tripwire], state: CallState, clinical: bool) -> Arm | Commit:
         armed: frozenset[str] = frozenset()
         if isinstance(state.escalation, Armed):
             armed = state.escalation.trips
@@ -245,15 +247,15 @@ class PolicyEngine:
             new.append(trip)
         if not new:
             first = softs[0]
-            return Arm(trip=first.name, outcome="SOFT", clinical_class=first.clinical_class)
+            return Arm(trip=first.name, outcome="SOFT", clinical_class=clinical)
         if armed:
             trip = new[0]
-            return Commit(trip=trip.name, outcome="SOFT", clinical_class=trip.clinical_class)
+            return Commit(trip=trip.name, outcome="SOFT", clinical_class=clinical)
         if len(new) >= 2:
             trip = new[1]
-            return Commit(trip=trip.name, outcome="SOFT", clinical_class=trip.clinical_class)
+            return Commit(trip=trip.name, outcome="SOFT", clinical_class=clinical)
         trip = new[0]
-        return Arm(trip=trip.name, outcome="SOFT", clinical_class=trip.clinical_class)
+        return Arm(trip=trip.name, outcome="SOFT", clinical_class=clinical)
 
 
 def _load_tripwire(source: str, index: int, item: object, seen: set[str]) -> Tripwire:

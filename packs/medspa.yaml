@@ -71,7 +71,7 @@ tripwires:
       - id: heavy_eyelid
         regex: '\bheavy eyelids?\b'
       - id: cant_raise_eyebrow
-        regex: '\b(?:can''t|cannot|can not) raise my eyebrow\b'
+        regex: '\b(?:cant|cannot|can not) raise my eyebrow\b'
       - id: rash
         regex: '\brash\b'
       - id: hives
@@ -97,12 +97,14 @@ tripwires:
     script: "I want to get you to the team for this."
     patterns:
       - id: age_teen_digits
-        regex: '\b(?:i(?:''m| am)|(?:s?he)(?:''s| is)|they(?:''re| are))\s+(?:1[0-7]|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
+        regex: '\b(?:im|i am|(?:s?he)(?:s| is)|theyre|they are)\s+(?:1[0-7]|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
       - id: age_child_years_old
         regex: '\b(?:1[0-7]|[0-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\s+years?\s+old\b'
       - id: age_teen_words
-        regex: '\b(?:i(?:''m| am)|(?:s?he)(?:''s| is))\s+(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
+        regex: '\b(?:im|i am|(?:s?he)(?:s| is))\s+(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
       - id: daughter_son_injectable
         regex: '\bmy (?:daughter|son|kid|child|teen|teenager)\b.{0,40}\b(?:botox|dysport|xeomin|tox|filler|juvederm|restylane|lip filler|injectable)\b'
       - id: injectable_then_child
         regex: '\b(?:botox|dysport|xeomin|tox|filler|juvederm|restylane|lip filler|injectable)\b.{0,40}\bmy (?:daughter|son|kid|child|teen|teenager)\b'
+      - id: child_is_age
+        regex: '\b(?:daughter|son|kid|child)(?:s| is)\s+(?:1[0-7]|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'

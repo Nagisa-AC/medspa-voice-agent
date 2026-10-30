@@ -299,6 +299,12 @@ PATTERN_CASES: list[tuple[str, str, str, str]] = [
         "Botox for my teenager",
         "Botox for my sister",
     ),
+    (
+        "minor_patient",
+        "child_is_age",
+        "my daughter is 16",
+        "my daughter is 19",
+    ),
 ]
 
 KNOWN_GAPS: list[tuple[str, str, str]] = [
@@ -438,6 +444,28 @@ def test_other_hard_beats_reply() -> None:
     result = ENGINE.evaluate("I'm pregnant, is this a bot", glow_state(), now=NOW)
     assert isinstance(result, Commit)
     assert result.trip == "clinical_question"
+    assert result.clinical_class is True
+
+
+def test_clinical_class_follows_any_matched_trip() -> None:
+    result = ENGINE.evaluate("get me a real person, my lip is numb", glow_state(), now=NOW)
+    assert isinstance(result, Commit)
+    assert result.clinical_class is True
+    assert result.trip == "adverse_event"
+
+
+def test_clinical_hard_outranks_other_hard() -> None:
+    result = ENGINE.evaluate("I'm pregnant and want a refund", glow_state(), now=NOW)
+    assert isinstance(result, Commit)
+    assert result.trip == "clinical_question"
+    assert result.clinical_class is True
+
+
+def test_clinical_hard_outranks_reply() -> None:
+    result = ENGINE.evaluate("is this a bot, I'm pregnant", glow_state(), now=NOW)
+    assert isinstance(result, Commit)
+    assert result.trip == "clinical_question"
+    assert result.clinical_class is True
 
 
 def test_reply_beats_soft() -> None:
@@ -553,7 +581,29 @@ def test_evaluate_does_not_mutate_state() -> None:
 def test_normalize_strips_punctuation() -> None:
     assert normalize_utterance("Is this a bot?") == "is this a bot"
     assert normalize_utterance("blood-thinner") == "blood thinner"
-    assert normalize_utterance("I can\u2019t breathe") == "i can't breathe"
+    assert normalize_utterance("I can\u2019t breathe") == "i cant breathe"
+    assert normalize_utterance("I'm 16") == "im 16"
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    ["cant breathe", "wont stop bleeding", "im 16", "shes sixteen"],
+)
+def test_apostropheless_forms_still_trip(utterance: str) -> None:
+    result = ENGINE.evaluate(utterance, glow_state(), now=NOW)
+    assert isinstance(result, Commit)
+
+
+def test_daughter_is_16_commits() -> None:
+    result = ENGINE.evaluate("my daughter is 16", glow_state(), now=NOW)
+    assert isinstance(result, Commit)
+    assert result.trip == "minor_patient"
+    assert result.clinical_class is True
+
+
+def test_daughter_is_19_continues() -> None:
+    result = ENGINE.evaluate("my daughter is 19", glow_state(), now=NOW)
+    assert isinstance(result, Continue)
 
 
 def test_load_invalid_regex(tmp_path: Path) -> None:
