@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -349,15 +349,18 @@ class NoMatch:
 Resolution = Match | Ambiguous | NoMatch
 
 
-def resolve_service(tenant: Tenant, text: str) -> Resolution:
-    """Whole-phrase, token-by-token match of caller text against service names and aliases.
+def phrase_spans(
+    text: str, phrases_by_owner: Sequence[Iterable[str]]
+) -> list[tuple[int, int, int]]:
+    """Whole-phrase token matches as (start, end, owner_index).
 
-    A match lying inside a longer match from a different service is dropped.
+    Same normalize_phrase and plural folding as alias uniqueness. Empty phrases
+    produce no spans.
     """
     words = normalize_phrase(text).split()
-    spans: list[tuple[int, int, int]] = []  # (start, end, service index)
-    for index, service in enumerate(tenant.services):
-        for phrase in (service.name, *service.aliases):
+    spans: list[tuple[int, int, int]] = []
+    for index, phrases in enumerate(phrases_by_owner):
+        for phrase in phrases:
             tokens = normalize_phrase(phrase).split()
             size = len(tokens)
             if not size:
@@ -365,6 +368,15 @@ def resolve_service(tenant: Tenant, text: str) -> Resolution:
             for start in range(len(words) - size + 1):
                 if words[start : start + size] == tokens:
                     spans.append((start, start + size, index))
+    return spans
+
+
+def resolve_service(tenant: Tenant, text: str) -> Resolution:
+    """Whole-phrase, token-by-token match of caller text against service names and aliases.
+
+    A match lying inside a longer match from a different service is dropped.
+    """
+    spans = phrase_spans(text, [(service.name, *service.aliases) for service in tenant.services])
 
     kept = [
         span
