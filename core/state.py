@@ -116,6 +116,9 @@ class CallState:
     offered_slots: list[OfferedSlot] = field(default_factory=list)
     turn_count: int = 0
     language: Literal["en", "es"] = "en"
+    caller_name: str | None = None
+    caller_number: str | None = None
+    caller_number_confirmed: bool = False
     # Built by `book` from the booking's intent; never derived from call_id, so a
     # callback after a dropped call collapses to the same key.
     idempotency_keys: set[str] = field(default_factory=set)

@@ -101,6 +101,9 @@ def test_new_state_starts_empty_except_seeded_numbers() -> None:
     assert s.idempotency_keys == set()
     assert s.turn_count == 0
     assert s.language == "en"
+    assert s.caller_name is None
+    assert s.caller_number is None
+    assert s.caller_number_confirmed is False
     assert s.escalation == NotEscalated()
     assert s.pending_transfer_number is None
 
@@ -398,6 +401,9 @@ FIELDS = {
     "offered_slots",
     "turn_count",
     "language",
+    "caller_name",
+    "caller_number",
+    "caller_number_confirmed",
     "idempotency_keys",
     "version",
 }
