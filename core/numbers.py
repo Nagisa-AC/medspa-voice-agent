@@ -18,13 +18,18 @@ _TOKEN_KINDS: dict[str, TokenKind] = {
     "ordinal": "ordinal",
 }
 
+_EN_DASH = "\u2013"
+_EM_DASH = "\u2014"
 _TOKEN_RE = re.compile(
     r"""
     (?P<money>\$)
     |(?P<ordinal>\d+(?:st|nd|rd|th))
     |(?P<digits>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+)
     |(?P<word>[A-Za-z]+(?:'[A-Za-z]+)?)
-    |(?P<punct>[:.,+\-()])
+    |(?P<punct>[:.,+\-()"""
+    + _EN_DASH
+    + _EM_DASH
+    + r"""])
     """,
     re.VERBOSE,
 )
@@ -105,8 +110,12 @@ _ORDINAL_WORDS: dict[str, int] = {
 }
 _DOLLAR_WORDS = frozenset({"dollar", "dollars", "buck", "bucks"})
 _CENT_WORDS = frozenset({"cent", "cents"})
-_UNIT_WORDS = frozenset({"unit", "syringe", "vial", "session", "area", "treatment"})
+_CURRENCY_WORDS = _DOLLAR_WORDS | _CENT_WORDS
+_UNIT_WORDS = frozenset(
+    {"unit", "syringe", "vial", "session", "area", "treatment", "shot", "injection"}
+)
 _UNIT_PREFIX = frozenset({"a", "an", "per", "each", "every"})
+_EACH_AFTER = frozenset({"each", "apiece"})
 _CUE_WORDS = frozenset(
     {"cost", "costs", "run", "runs", "charge", "charges", "pay", "price", "prices"}
 )
@@ -117,9 +126,10 @@ _CUE_PHRASES: tuple[tuple[str, ...], ...] = (
     ("is", "about"),
     ("is", "around"),
 )
-_PHONE_PUNCT = frozenset({"+", "-", ".", "(", ")"})
-_HYPHENS = frozenset({"-"})
+_PHONE_PUNCT = frozenset({"+", "-", _EN_DASH, _EM_DASH, ".", "(", ")"})
+_HYPHENS = frozenset({"-", _EN_DASH, _EM_DASH})
 _PRICE_WINDOW = 3
+_CURRENCY_AFTER = 2
 
 
 @dataclass(frozen=True)
@@ -721,8 +731,42 @@ def _window_has_phrase(tokens: list[Token], lo: int, hi: int, phrase: str) -> bo
     return any(norms[i : i + length] == parts for i in range(len(norms) - length + 1))
 
 
+def _has_each_or_apiece(tokens: list[Token], hi: int) -> bool:
+    if hi >= len(tokens):
+        return False
+    token = tokens[hi]
+    return token.kind == "word" and token.norm in _EACH_AFTER
+
+
+def _has_per_word(tokens: list[Token], lo: int, hi: int) -> bool:
+    left = max(0, lo - _PRICE_WINDOW)
+    right = min(len(tokens), hi + _PRICE_WINDOW)
+    for idx in range(left, right):
+        if tokens[idx].kind != "word" or tokens[idx].norm != "per":
+            continue
+        nxt = idx + 1
+        if nxt >= len(tokens) or tokens[nxt].kind != "word":
+            continue
+        if _token_distance(idx, lo, hi) <= _PRICE_WINDOW:
+            return True
+    return False
+
+
+def _has_currency_after(tokens: list[Token], hit: _Hit) -> bool:
+    stop = min(len(tokens), hit.tok_hi + _CURRENCY_AFTER)
+    for idx in range(hit.tok_hi, stop):
+        token = tokens[idx]
+        if token.kind == "word" and token.norm in _CURRENCY_WORDS:
+            return True
+    return False
+
+
 def _in_price_window(tokens: list[Token], hit: _Hit, extras: tuple[str, ...]) -> bool:
     if _has_unit_price(tokens, hit.tok_lo, hit.tok_hi):
+        return True
+    if _has_each_or_apiece(tokens, hit.tok_hi):
+        return True
+    if _has_per_word(tokens, hit.tok_lo, hit.tok_hi):
         return True
     if _has_left_cue(tokens, hit.tok_lo):
         return True
@@ -732,7 +776,7 @@ def _in_price_window(tokens: list[Token], hit: _Hit, extras: tuple[str, ...]) ->
 def _classify(tokens: list[Token], hits: list[_Hit], extras: tuple[str, ...]) -> list[Found]:
     found: list[Found] = []
     for hit in hits:
-        if hit.marked_amount:
+        if hit.marked_amount or _has_currency_after(tokens, hit):
             kind: NumberKind = "amount"
         elif _in_price_window(tokens, hit, extras):
             kind = "price_context"
