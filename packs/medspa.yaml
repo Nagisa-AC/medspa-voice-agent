@@ -1,0 +1,110 @@
+# Input tripwires for the med spa vertical. Over-block until M3 clinician review.
+tripwires:
+  - name: clinical_question
+    outcome: HARD
+    clinical_class: true
+    script: "I want to get you to the team for this."
+    patterns:
+      - id: pregnant
+        regex: '\bpregnan\w*\b'
+      - id: breastfeeding
+        regex: '\bbreastfeed\w*\b'
+      - id: contraindication
+        regex: '\bcontraindicat\w*\b'
+      - id: blood_thinner
+        regex: '\bblood thinners?\b'
+      - id: autoimmune
+        regex: '\bautoimmune\b'
+      - id: am_i_a_candidate
+        regex: '\bam i a candidate\b'
+      - id: can_i_get_if
+        regex: '\bcan i get\b.{0,60}\bif\b'
+      - id: is_it_safe
+        regex: '\bis it safe\b'
+      - id: allergy
+        regex: '\ballerg\w*\b'
+      - id: accutane
+        regex: '\baccutane\b'
+      - id: isotretinoin
+        regex: '\bisotretinoin\b'
+      - id: medication
+        regex: '\bmedications?\b'
+      - id: cold_sore
+        regex: '\bcold sores?\b'
+      - id: keloid
+        regex: '\bkeloids?\b'
+  - name: adverse_event
+    outcome: HARD
+    clinical_class: true
+    script: "I want to get you to the team for this."
+    patterns:
+      - id: drooping
+        regex: '\bdroop(?:ing|s|ed)?\b'
+      - id: ptosis
+        regex: '\bptosis\b'
+      - id: asymmetry
+        regex: '\basymmetr\w*\b'
+      - id: lump
+        regex: '\blumps?\b'
+      - id: nodule
+        regex: '\bnodules?\b'
+      - id: bruising
+        regex: '\bbruis(?:e|es|ed|ing)\b'
+      - id: swelling
+        regex: '\bswelling\b|\bswollen\b'
+      - id: infection
+        regex: '\binfect(?:ion|ed|ions)?\b'
+      - id: vision_changes
+        regex: '\bvision changes\b|\b(?:blurry|double) vision\b'
+      - id: numbness
+        regex: '\bnumbness\b|\bnumb\b'
+      - id: since_my_treatment
+        regex: '\bsince (?:my|the) treatment\b'
+      - id: since_after_injectable
+        regex: '\b(?:since|after) my\b.{0,40}\b(?:botox|dysport|xeomin|tox|filler|juvederm|restylane|lip filler|injectable|treatment|appointment)\b'
+      - id: still_hurts
+        regex: '\bstill hurts?\b'
+      - id: uneven
+        regex: '\buneven\b'
+      - id: lopsided
+        regex: '\blopsided\b'
+      - id: heavy_eyelid
+        regex: '\bheavy eyelids?\b'
+      - id: cant_raise_eyebrow
+        regex: '\b(?:cant|cannot|can not) raise my eyebrow\b'
+      - id: rash
+        regex: '\brash\b'
+      - id: hives
+        regex: '\bhives\b'
+      - id: pus
+        regex: '\bpus\b'
+      - id: fever
+        regex: '\bfever\b'
+      - id: skin_color
+        regex: '\bskin turning (?:white|blue|gray|grey|purple)\b'
+  - name: glp1_specifics
+    outcome: HARD
+    clinical_class: true
+    script: "I want to get you to the team for this."
+    patterns:
+      - id: glp1_then_qualifier
+        regex: '\b(?:semaglutide|tirzepatide|ozempic|wegovy|mounjaro|zepbound)\b.{0,40}\b(?:doses?|dosing|mg|side effects?|nausea|nauseous|vomit\w*|throwing up|sick)\b'
+      - id: qualifier_then_glp1
+        regex: '\b(?:doses?|dosing|mg|side effects?|nausea|nauseous|vomit\w*|throwing up|sick)\b.{0,40}\b(?:semaglutide|tirzepatide|ozempic|wegovy|mounjaro|zepbound)\b'
+  - name: minor_patient
+    outcome: HARD
+    clinical_class: true
+    script: "I want to get you to the team for this."
+    patterns:
+      - id: age_teen_digits
+        regex: '\b(?:im|i am|(?:s?he)(?:s| is)|theyre|they are)\s+(?:1[0-7]|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
+      - id: age_child_years_old
+        regex: '\b(?:1[0-7]|[0-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\s+years?\s+old\b'
+      - id: age_teen_words
+        regex: '\b(?:im|i am|(?:s?he)(?:s| is))\s+(?:ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
+      - id: daughter_son_injectable
+        regex: '\bmy (?:daughter|son|kid|child|teen|teenager)\b.{0,40}\b(?:botox|dysport|xeomin|tox|filler|juvederm|restylane|lip filler|injectable)\b'
+      - id: injectable_then_child
+        regex: '\b(?:botox|dysport|xeomin|tox|filler|juvederm|restylane|lip filler|injectable)\b.{0,40}\bmy (?:daughter|son|kid|child|teen|teenager)\b'
+      - id: child_is_age
+        regex: '\b(?:daughter|son|kid|child)(?:s| is)\s+(?:1[0-7]|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen)\b'
