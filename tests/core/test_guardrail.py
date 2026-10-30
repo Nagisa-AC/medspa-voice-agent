@@ -6,7 +6,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 import core.guardrail
@@ -194,10 +194,9 @@ def test_concatenated_output_equals_input_for_spec_cases() -> None:
 _HYPOTHESIS_PIECES = (". ", " ", "\n", "$13", "50", "Dr", "nine", "fifty", "?")
 
 
-@settings(max_examples=40, deadline=200)
 @given(
-    st.lists(st.sampled_from(_HYPOTHESIS_PIECES), max_size=24).map("".join),
-    st.lists(st.integers(min_value=0, max_value=10_000), max_size=16),
+    st.lists(st.sampled_from(_HYPOTHESIS_PIECES), max_size=40).map("".join),
+    st.lists(st.integers(min_value=0, max_value=10_000), max_size=25),
 )
 def test_random_chunks_match_whole_and_concat(text: str, cuts: list[int]) -> None:
     whole = split_text(text)
