@@ -17,7 +17,7 @@ from core.policy import (
     load_policy_engine,
     normalize_utterance,
 )
-from core.state import CallState, EmergencyEnd, NotEscalated, new_call_state
+from core.state import Callback, CallState, EmergencyEnd, NotEscalated, new_call_state
 from core.tenant import extra_price_words, load_tenant_file
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -512,13 +512,31 @@ def test_naive_now_is_rejected() -> None:
         ENGINE.evaluate("hello", glow_state(), now=datetime(2026, 11, 3, 16, 0))  # noqa: DTZ001
 
 
-def test_already_committed_does_not_rematch() -> None:
+def test_already_committed_keeps_trip() -> None:
     state = glow_state()
     state.record_commit("medical_emergency", EmergencyEnd())
     result = ENGINE.evaluate("get me a real person", state, now=NOW)
     assert isinstance(result, Commit)
     assert result.trip == "medical_emergency"
     assert result.clinical_class is True
+
+
+def test_committed_still_matches_for_redaction() -> None:
+    state = glow_state()
+    first = ENGINE.evaluate("get me a real person", state, now=NOW)
+    assert isinstance(first, Commit)
+    assert first.trip == "explicit_human_request"
+    assert first.clinical_class is False
+    state.record_commit(first.trip, Callback())
+    droop = ENGINE.evaluate("my eye has been drooping since yesterday", state, now=NOW)
+    assert isinstance(droop, Commit)
+    assert droop.trip == "explicit_human_request"
+    assert droop.outcome == "HARD"
+    assert droop.clinical_class is True
+    confirm = ENGINE.evaluate("yes that's my number", state, now=NOW)
+    assert isinstance(confirm, Commit)
+    assert confirm.trip == "explicit_human_request"
+    assert confirm.clinical_class is False
 
 
 @pytest.mark.parametrize(("tag", "trip", "utterance"), KNOWN_GAPS)

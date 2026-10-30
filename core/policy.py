@@ -175,7 +175,8 @@ class PolicyEngine:
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be timezone-aware")
         if isinstance(state.escalation, Committed):
-            return self._commit_named(state.escalation.trip)
+            clinical = any(trip.clinical_class for trip in self._hits(utterance))
+            return self._commit_named(state.escalation.trip, clinical)
         hits = self._hits(utterance)
         if state.turn_count >= self._tenant.max_turns:
             hits.append(_TURN_BUDGET)
@@ -227,12 +228,16 @@ class PolicyEngine:
     def _commit(self, trip: Tripwire, clinical: bool) -> Commit:
         return Commit(trip=trip.name, outcome="HARD", clinical_class=clinical)
 
-    def _commit_named(self, name: str) -> Commit:
+    def _commit_named(self, name: str, utterance_clinical: bool) -> Commit:
         trip = self._by_name.get(name)
         if trip is None:
-            return Commit(trip=name, outcome="SOFT", clinical_class=False)
+            return Commit(trip=name, outcome="SOFT", clinical_class=utterance_clinical)
         outcome: Literal["HARD", "SOFT"] = "HARD" if trip.outcome == "HARD" else "SOFT"
-        return Commit(trip=name, outcome=outcome, clinical_class=trip.clinical_class)
+        return Commit(
+            trip=name,
+            outcome=outcome,
+            clinical_class=trip.clinical_class or utterance_clinical,
+        )
 
     def _soft(self, softs: Sequence[Tripwire], state: CallState, clinical: bool) -> Arm | Commit:
         armed: frozenset[str] = frozenset()
