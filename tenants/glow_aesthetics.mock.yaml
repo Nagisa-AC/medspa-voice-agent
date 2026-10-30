@@ -1,0 +1,12 @@
+# Fictional Glow schedule. Hours are tenant-local wall clocks, not UTC.
+providers:
+  - id: np_1
+    types: [NP]
+  - id: rn_1
+    types: [RN]
+rooms:
+  - id: inject_1
+    types: [injectable]
+  - id: inject_2
+    types: [injectable]
+hours: "Mon-Fri 09:00-18:00, Sat 10:00-16:00"
