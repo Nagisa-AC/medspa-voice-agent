@@ -90,10 +90,7 @@ def _close_boundary(buf: str, j: int, end_of_stream: bool) -> _Boundary:
         j += 1
     if j < n:
         if buf[j].isspace():
-            j += 1
-            while j < n and buf[j].isspace():
-                j += 1
-            return j
+            return j + 1
         return None
     if end_of_stream:
         return n

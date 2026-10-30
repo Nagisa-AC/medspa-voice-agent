@@ -55,6 +55,8 @@ def split_chunks(chunks: list[str]) -> list[str]:
         ("Wait… okay.", ["Wait… ", "okay."]),
         ("Wait... okay.", ["Wait... ", "okay."]),
         ("Hello.\nWorld.", ["Hello.\n", "World."]),
+        ("Hello.\n\nWorld.", ["Hello.\n", "\nWorld."]),
+        ("Hello.  World.", ["Hello. ", " World."]),
         ("nine\nfifty.", ["nine\nfifty."]),
         ("The 1st. Next.", ["The 1st. ", "Next."]),
         ("Hello.World", ["Hello.World"]),
@@ -97,6 +99,24 @@ def test_number_words_split_across_chunks_stay_one_sentence() -> None:
     assert buffer.feed("nine ") == []
     assert buffer.feed("fifty.") == []
     assert buffer.flush() == ["nine fifty."]
+
+
+def test_extra_space_chunk_split_matches_whole() -> None:
+    text = "Hello.  World."
+    chunks = ["Hello. ", " World."]
+    assert "".join(chunks) == text
+    expected = ["Hello. ", " World."]
+    assert split_text(text) == expected
+    assert split_chunks(chunks) == expected
+
+
+def test_blank_line_split_between_newlines_matches_whole() -> None:
+    text = "Hello.\n\nWorld."
+    chunks = ["Hello.\n", "\nWorld."]
+    assert "".join(chunks) == text
+    expected = ["Hello.\n", "\nWorld."]
+    assert split_text(text) == expected
+    assert split_chunks(chunks) == expected
 
 
 def test_period_at_chunk_end_waits() -> None:
@@ -144,8 +164,11 @@ def test_concatenated_output_equals_input_for_spec_cases() -> None:
 # --------------------------------------------------------------------------- hypothesis
 
 
+_HYPOTHESIS_PIECES = (". ", " ", "\n", "$13", "50", "Dr", "nine", "fifty", "?")
+
+
 @given(
-    st.text(max_size=200),
+    st.lists(st.sampled_from(_HYPOTHESIS_PIECES), max_size=40).map("".join),
     st.lists(st.integers(min_value=0), max_size=25),
 )
 def test_random_chunks_match_whole_and_concat(text: str, cuts: list[int]) -> None:
