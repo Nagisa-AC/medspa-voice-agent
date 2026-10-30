@@ -1,0 +1,156 @@
+# Input tripwires for every vertical. Over-block until M3 clinician review.
+tripwires:
+  - name: medical_emergency
+    outcome: HARD
+    clinical_class: true
+    script: "If this is an emergency, please hang up and call 911 now."
+    patterns:
+      - id: cant_breathe
+        regex: '\b(?:can''t|cannot|can not) (?:breathe|catch my breath)\b'
+      - id: trouble_breathing
+        regex: '\b(?:trouble|difficulty)(?:\s+to)?\s+breath(?:e|ing)\b'
+      - id: hard_to_breathe
+        regex: '\bhard to breathe\b'
+      - id: short_of_breath
+        regex: '\bshort of breath\b'
+      - id: struggling_to_breathe
+        regex: '\bstruggling to breathe\b'
+      - id: not_breathing
+        regex: '\bnot breathing\b'
+      - id: throat_feels_tight
+        regex: '\bthroat feels tight\b'
+      - id: chest_pain
+        regex: '\bchest pains?\b|\bpain in (?:my |the )?chest\b'
+      - id: passed_out
+        regex: '\bpassed out\b|\bpassing out\b|\bpass out\b|\bfainted\b|\bfainting\b'
+      - id: seizure
+        regex: '\bseizures?\b'
+      - id: anaphylaxis
+        regex: '\banaphylaxis\b|\banaphylactic\b'
+      - id: throat_closing
+        regex: '\b(?:throat|tongue)s? (?:is |are )?(?:closing|swelling|swollen)\b'
+      - id: allergic_reaction
+        regex: '\ballergic reactions?\b'
+      - id: hives_all_over
+        regex: '\bhives all over\b'
+      - id: unresponsive
+        regex: '\bunresponsive\b'
+      - id: collapsed
+        regex: '\bcollapsed\b'
+      - id: wont_wake_up
+        regex: '\bw(?:on''t|ill not) wake up\b'
+      - id: cant_see
+        regex: '\b(?:can''t|cannot|can not) see\b'
+      - id: lost_vision
+        regex: '\blost my vision\b'
+      - id: went_blind
+        regex: '\bwent blind\b|\bgone blind\b'
+      - id: bleeding_a_lot
+        regex: '\bbleeding a lot\b'
+      - id: wont_stop_bleeding
+        regex: '\bw(?:on''t|ill not) stop bleeding\b'
+      - id: ambulance
+        regex: '\bambulance\b'
+      - id: emergency_room
+        regex: '\bemergency room\b'
+      - id: calling_911
+        regex: '\b(?:call(?:ing|ed)?|dial(?:ing|ed)?)\s+911\b'
+      - id: standalone_911
+        regex: '\b911\b'
+      - id: kill_myself
+        regex: '\bkill myself\b'
+      - id: suicide
+        regex: '\bsuicid\w*\b'
+      - id: end_my_life
+        regex: '\bend my life\b'
+  - name: legal_or_complaint
+    outcome: HARD
+    clinical_class: false
+    script: "I want to get you to the team for this."
+    patterns:
+      - id: lawyer
+        regex: '\blawyers?\b|\battorney\b'
+      - id: sue
+        regex: '\bsue\b|\bsuing\b|\bsued\b'
+      - id: lawsuit
+        regex: '\blawsuit\b'
+      - id: malpractice
+        regex: '\bmalpractice\b'
+      - id: board_complaint
+        regex: '\bboard complaint\b'
+      - id: refund
+        regex: '\brefund\b'
+      - id: chargeback
+        regex: '\bchargeback\b'
+      - id: fraud
+        regex: '\bfraud\b'
+      - id: dispute
+        regex: '\bdispute\b'
+      - id: report_you
+        regex: '\breport you\b'
+      - id: better_business_bureau
+        regex: '\bbetter business bureau\b'
+  - name: explicit_human_request
+    outcome: HARD
+    clinical_class: false
+    script: "I want to get you to the team for this."
+    patterns:
+      - id: real_person_request
+        regex: '\b(?:get me|give me|talk to|speak to|speak with|talk with|connect me (?:to|with)|put me through to)\s+(?:a )?(?:real person|human(?: being)?|person)\b'
+      - id: want_need_person
+        regex: '\bi (?:want|need) (?:a )?(?:real |live )?(?:person|human)\b'
+      - id: human_being
+        regex: '\bhuman being\b'
+      - id: talk_to_someone
+        regex: '\b(?:talk|speak) to someone\b'
+      - id: transfer_me
+        regex: '\btransfer me\b'
+      - id: operator
+        regex: '\boperator\b'
+      - id: representative
+        regex: '\brepresentative\b'
+      - id: manager
+        regex: '\bmanager\b'
+      - id: front_desk
+        regex: '\bfront desk\b'
+      - id: talk_to_clinician
+        regex: '\b(?:talk|speak) to (?:the )?(?:injector|nurse|doctor)\b'
+  - name: ai_identity_question
+    outcome: REPLY
+    clinical_class: false
+    script: "Yes, I'm Glow's virtual assistant. I can help with prices and booking, or get someone from the team for you."
+    patterns:
+      - id: is_this_a_bot
+        regex: '\bis this (?:an? )?(?:bot|robot|ai)\b'
+      - id: talking_to_robot
+        regex: '\bam i talking to (?:an? )?(?:bot|robot|ai|real person)\b'
+      - id: are_you_ai
+        regex: '\bare you (?:an? )?(?:ai|bot|robot|artificial intelligence)\b'
+      - id: are_you_real_person
+        regex: '\bare you a real person\b'
+  - name: prompt_injection
+    outcome: SOFT
+    clinical_class: false
+    script: ""
+    patterns:
+      - id: ignore_instructions
+        regex: '\bignore (?:your |the |all )?(?:previous |prior )?instructions\b'
+      - id: system_prompt
+        regex: '\bsystem prompt\b'
+      - id: you_are_now
+        regex: '\byou are now\b'
+      - id: developer_mode
+        regex: '\bdeveloper mode\b'
+  - name: hostility
+    outcome: SOFT
+    clinical_class: false
+    script: ""
+    patterns:
+      - id: profanity
+        regex: '\b(?:fuck(?:ing)?|shit|asshole|bitch|damn you)\b'
+      - id: useless
+        regex: '\buseless\b'
+      - id: incompetent
+        regex: '\bincompetent\b'
+      - id: this_is_a_joke
+        regex: '\bthis is a joke\b|\byou(?:''re| are) a joke\b'
