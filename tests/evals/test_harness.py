@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 import ast
+import json
+from collections.abc import AsyncIterator
 from functools import partial
 from pathlib import Path
 
 import pytest
+import yaml
 
 import evals.harness
-from core.guardrail import load_output_pack
+from core.crypto import InMemoryKeyStore
+from core.events import EventDraft, InMemoryEventLog
+from core.guardrail import Blocked, check_clinical, load_output_pack
 from core.llm import ScriptedLLM
 from core.numbers import find_numbers
 from core.policy import load_input_pack
+from core.state import CallerLine, CallState, Committed, Transfer
 from core.tenant import extra_price_words, load_tenant_file
-from core.turn import OutputChunk
+from core.turn import OutputChunk, TurnLoop
 from evals.harness import (
+    CaseFailure,
     CaseLoadError,
+    Report,
+    _clinical_leak,
     check_model_order,
     format_report,
     load_case_path,
@@ -97,7 +106,7 @@ def test_every_pack_pattern_has_a_case() -> None:
 
 
 def test_clinical_rows_cover_every_output_pattern() -> None:
-    raw = __import__("yaml").safe_load(
+    raw = yaml.safe_load(
         (ROOT / "evals" / "cases" / "clinical_output" / "sentences.yaml").read_text(
             encoding="utf-8"
         )
@@ -107,6 +116,18 @@ def test_clinical_rows_cover_every_output_pattern() -> None:
     covered = {row["pattern"] for row in rows}
     pack_ids = {pattern.id for pattern in PACK.patterns}
     assert pack_ids <= covered
+
+
+def test_clinical_row_labels_match_check_clinical() -> None:
+    raw = yaml.safe_load(
+        (ROOT / "evals" / "cases" / "clinical_output" / "sentences.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    for index, row in enumerate(raw["rows"]):
+        result = check_clinical(row["text"], PACK)
+        assert isinstance(result, Blocked)
+        assert row["pattern"] in result.pattern_ids, index
 
 
 def test_sentence_tables_expand_ids() -> None:
@@ -121,7 +142,7 @@ def test_sentence_tables_expand_ids() -> None:
 
 
 def test_price_invention_meets_floor() -> None:
-    raw = __import__("yaml").safe_load(
+    raw = yaml.safe_load(
         (ROOT / "evals" / "cases" / "price_invention" / "sentences.yaml").read_text(
             encoding="utf-8"
         )
@@ -204,6 +225,75 @@ def test_harness_does_not_import_retell() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
     assert "retell" not in imported
+
+
+async def test_planted_clinical_leak_omits_phrase() -> None:
+    case = load_case_path(
+        ROOT / "evals" / "cases" / "escalation" / "clinical_question__keloid.yaml"
+    )
+    phrase = "I keloid easily"
+    keys = InMemoryKeyStore()
+    await keys.create(f"eval_{case.id}")
+    log = InMemoryEventLog(keys)
+    await log.append(
+        EventDraft(
+            call_id=f"eval_{case.id}",
+            tenant_id="glow_aesthetics",
+            at=case.clock,
+            kind="tool_invoked",
+            payload={"tool": "lookup_faq", "args": json.dumps({"question_text": phrase})},
+        )
+    )
+    events = await log.read(f"eval_{case.id}")
+    state = CallState(
+        call_id=f"eval_{case.id}",
+        tenant_id="glow_aesthetics",
+        started_at=case.clock,
+        data_key_id="k",
+    )
+    state.record_commit("clinical_question", Transfer(tier=1, target="+12025550100"))
+    state.transcript.append(CallerLine("[redacted:clinical_question]", case.clock))
+    assert _clinical_leak(case, events, state)
+    failure = CaseFailure(category=case.category, id=case.id, check="clinical_leak")
+    report = Report()
+    report.add(case, failure)
+    text = format_report(report)
+    assert failure.check == "clinical_leak"
+    assert "clinical_leak" in text
+    assert phrase not in text
+
+
+class _StreamOnCommit(TurnLoop):
+    async def handle_caller_turn(
+        self, state: CallState, utterance: str
+    ) -> AsyncIterator[OutputChunk]:
+        chunks = [chunk async for chunk in super().handle_caller_turn(state, utterance)]
+        if isinstance(state.escalation, Committed):
+            stream = self.model.stream(
+                (),
+                (),
+                max_output_tokens=self.max_output_tokens,
+                first_token_timeout=self.first_token_timeout,
+                idle_timeout=self.idle_timeout,
+            )
+            try:
+                async for _event in stream:
+                    pass
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    await close()
+        for chunk in chunks:
+            yield chunk
+
+
+async def test_planted_model_after_commit() -> None:
+    case = load_case_path(
+        ROOT / "evals" / "cases" / "escalation" / "medical_emergency__cant_breathe.yaml"
+    )
+    failure = await run_case(case, loop_cls=_StreamOnCommit)
+    assert failure is not None
+    assert failure.check == "model_after_commit"
 
 
 def test_scripted_from_mapping_round_trips() -> None:

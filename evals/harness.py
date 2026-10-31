@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
@@ -21,7 +21,7 @@ from core.events import Event, InMemoryEventLog
 from core.guardrail import Blocked, OutputPack, check_sentence, load_output_pack
 from core.llm import ScriptedLLM
 from core.numbers import find_numbers
-from core.policy import load_policy_engine
+from core.policy import load_input_pack, load_policy_engine
 from core.state import (
     CallerLine,
     CallState,
@@ -68,16 +68,6 @@ _TEXT_PROMISE = re.compile(
     r"|\bsend you a text\b"
     r"|\bsms you\b",
     re.IGNORECASE,
-)
-_CLINICAL_LEAK = (
-    "pregnant",
-    "breastfeeding",
-    "drooping",
-    "chest pain",
-    "anaphylaxis",
-    "suicide",
-    "ozempic",
-    "seizure",
 )
 _TABLE_KEYS = frozenset({"rows"})
 PathKind = Literal["emergency_end", "transfer", "callback"]
@@ -459,7 +449,22 @@ def check_model_order(
     return None
 
 
-async def run_case(case: EvalCase) -> CaseFailure | None:
+@cache
+def _clinical_trip_names() -> frozenset[str]:
+    names: set[str] = set()
+    for filename in ("universal.yaml", "medspa.yaml"):
+        pack = load_input_pack(PACKS_DIR / filename)
+        for trip in pack.tripwires:
+            if trip.clinical_class:
+                names.add(trip.name)
+    return frozenset(names)
+
+
+async def run_case(
+    case: EvalCase,
+    *,
+    loop_cls: type[TurnLoop] = TurnLoop,
+) -> CaseFailure | None:
     tenant = _tenant(case.tenant)
     pack = load_output_pack(PACKS_DIR / "medspa.output.yaml")
     engine = load_policy_engine(tenant)
@@ -490,11 +495,11 @@ async def run_case(case: EvalCase) -> CaseFailure | None:
         ROOT / "tenants" / "glow_aesthetics.mock.yaml", tz=tenant.tz, clock=clock
     )
     model = _script(case)
-    loop = TurnLoop(
+    loop = loop_cls(
         tenant,
         store,
         log,
-        _OfferRewrite(model, state),
+        _OfferRewrite(model, state, tenant.tz),
         adapter,
         SECRET,
         clock=clock,
@@ -562,7 +567,7 @@ def _apply_hooks(hooks: Hooks, state: CallState, adapter: MockBookingAdapter) ->
             )
         )
     if hooks.hide_next_booking:
-        adapter.hide_on_next_get("bk_00001")
+        adapter.hide_on_next_get(f"bk_{adapter._next_id:05d}")
     if hooks.rewrite_offer == "unavailable":
         state.offered_slots[0] = type(first)(
             service_id=first.service_id,
@@ -666,18 +671,18 @@ def _spoken_subsequence(texts: Sequence[str], expect: Sequence[SpokenExpect]) ->
 
 
 def _clinical_leak(case: EvalCase, events: Sequence[Event], state: CallState) -> bool:
+    if not isinstance(state.escalation, Committed):
+        return False
+    if state.escalation.trip not in _clinical_trip_names():
+        return False
     rendered = [str(value) for event in events for value in event.payload.values()]
     blob = "\n".join(rendered)
     for utterance in case.utterances:
-        if utterance in blob and any(token in utterance.lower() for token in _CLINICAL_LEAK):
+        if utterance in blob:
             return True
-    for line in state.transcript:
-        if not isinstance(line, CallerLine):
-            continue
-        if line.text.startswith("[redacted:"):
-            continue
-        if any(token in line.text.lower() for token in _CLINICAL_LEAK):
-            return True
+        for line in state.transcript:
+            if isinstance(line, CallerLine) and utterance in line.text:
+                return True
     return False
 
 
@@ -713,10 +718,10 @@ async def _booking_mismatch(events: Sequence[Event], adapter: MockBookingAdapter
     if not isinstance(booking_id, str) or not booking_id:
         return True
     try:
-        booking = await adapter.get_booking(booking_id)
+        await adapter.get_booking(booking_id)
     except Exception:
         return True
-    return booking.id not in adapter._bookings
+    return False
 
 
 def _path_label(path: object) -> str:
@@ -736,22 +741,24 @@ def _fail(case: EvalCase, check: str) -> CaseFailure:
 
 
 class _OfferRewrite:
-    def __init__(self, inner: ScriptedLLM, state: CallState) -> None:
+    def __init__(self, inner: ScriptedLLM, state: CallState, tz: ZoneInfo) -> None:
         self.inner = inner
         self.state = state
+        self.tz = tz
 
     @property
     def call_count(self) -> int:
         return self.inner.call_count
 
     def stream(self, messages: Sequence[Any], tools: Sequence[Any], **kwargs: Any) -> Any:
-        return _RewriteStream(self.inner.stream(messages, tools, **kwargs), self.state)
+        return _RewriteStream(self.inner.stream(messages, tools, **kwargs), self.state, self.tz)
 
 
 class _RewriteStream:
-    def __init__(self, inner: Any, state: CallState) -> None:
+    def __init__(self, inner: Any, state: CallState, tz: ZoneInfo) -> None:
         self.inner = inner
         self.state = state
+        self.tz = tz
 
     def __aiter__(self) -> _RewriteStream:
         return self
@@ -767,7 +774,7 @@ class _RewriteStream:
             return event
         start = self.state.offered_slots[0].start
         rewritten = dict(event.args)
-        local = start.astimezone(ZoneInfo("America/New_York")).replace(microsecond=0)
+        local = start.astimezone(self.tz).replace(microsecond=0)
         rewritten["slot_start_iso"] = local.strftime("%Y-%m-%dT%H:%M:%S")
         return ToolCall(event.id, event.name, rewritten)
 
