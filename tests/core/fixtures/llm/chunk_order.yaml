@@ -1,0 +1,7 @@
+turns:
+  - id: three_chunks
+    events:
+      - {type: text, text: "So that'll be about "}
+      - {type: text, text: "$450 "}
+      - {type: text, text: "total."}
+      - {type: done, stop: stop}

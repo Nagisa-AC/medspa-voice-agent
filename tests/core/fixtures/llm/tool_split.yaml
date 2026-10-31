@@ -1,0 +1,11 @@
+turns:
+  - id: split_quote
+    events:
+      - {type: text, text: "Let me check."}
+      - type: tool_call
+        id: call_1
+        name: quote_price
+        args_chunks:
+          - '{"service_text":'
+          - ' "lip filler"}'
+      - {type: done, stop: tool_calls}

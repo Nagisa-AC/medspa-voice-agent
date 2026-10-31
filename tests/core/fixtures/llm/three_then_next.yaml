@@ -1,0 +1,11 @@
+turns:
+  - id: three_chunks
+    events:
+      - {type: text, text: "one"}
+      - {type: text, text: "two"}
+      - {type: text, text: "three"}
+      - {type: done}
+  - id: next_turn
+    events:
+      - {type: text, text: "after close"}
+      - {type: done}

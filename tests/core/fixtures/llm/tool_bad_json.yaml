@@ -1,0 +1,10 @@
+turns:
+  - id: broken_args
+    events:
+      - type: tool_call
+        id: call_1
+        name: quote_price
+        args_chunks:
+          - '{"service_text":'
+          - " not-json"
+      - {type: done, stop: tool_calls}
