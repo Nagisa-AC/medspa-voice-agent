@@ -493,8 +493,9 @@ def test_duration_budget_uses_injected_clock() -> None:
     state = spa_state(started=started)
     later = started + timedelta(seconds=SPA.max_seconds)
     result = SPA_ENGINE.evaluate("hello", state, now=later)
-    assert isinstance(result, Arm)
+    assert isinstance(result, Commit)
     assert result.trip == "over_duration_budget"
+    assert result.outcome == "SOFT"
 
 
 def test_both_budgets_commit() -> None:

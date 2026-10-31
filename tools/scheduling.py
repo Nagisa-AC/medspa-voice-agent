@@ -67,6 +67,18 @@ class CheckAvailabilityResult:
 class BookResult:
     say: str
     model: Mapping[str, object]
+    booking_id: str | None = None
+    service_id: str | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"BookResult(booked={self.model.get('booked')}, "
+            f"needs_review={self.model.get('needs_review')}, "
+            f"has_booking_id={self.booking_id is not None})"
+        )
+
+    def __str__(self) -> str:
+        return repr(self)
 
 
 def format_slot_time(start: datetime, tz: ZoneInfo) -> str:
@@ -320,16 +332,30 @@ async def book(
             )
         else:
             say = CONFIRM_BARE
-        return _finish(state, say, _flags(booked=False, needs_review=False, retry=False), extract)
+        return _finish(
+            state,
+            say,
+            _flags(booked=False, needs_review=False, retry=False),
+            extract,
+            service_id=hits[0].service_id if len(hits) == 1 else None,
+        )
     name = patient_name.strip()
     if not name:
         return _finish(
-            state, NEED_NAME, _flags(booked=False, needs_review=False, retry=False), extract
+            state,
+            NEED_NAME,
+            _flags(booked=False, needs_review=False, retry=False),
+            extract,
+            service_id=hits[0].service_id if len(hits) == 1 else None,
         )
     phone = normalize_phone(patient_phone)
     if phone is None:
         return _finish(
-            state, NEED_PHONE, _flags(booked=False, needs_review=False, retry=False), extract
+            state,
+            NEED_PHONE,
+            _flags(booked=False, needs_review=False, retry=False),
+            extract,
+            service_id=hits[0].service_id if len(hits) == 1 else None,
         )
     if len(hits) != 1:
         if not state.offered_slots:
@@ -339,7 +365,11 @@ async def book(
         prefix = DST_COLLISION if len(hits) > 1 else NOT_HELD
         times = await _relist(tenant, state, adapter, state.offered_slots[0].service_id, now)
         return _finish(
-            state, prefix + times, _flags(booked=False, needs_review=False, retry=True), extract
+            state,
+            prefix + times,
+            _flags(booked=False, needs_review=False, retry=True),
+            extract,
+            service_id=state.offered_slots[0].service_id,
         )
     offered = hits[0]
     slot = Slot(
@@ -356,7 +386,11 @@ async def book(
     except SlotTaken:
         times = await _relist(tenant, state, adapter, offered.service_id, now)
         return _finish(
-            state, TAKEN + times, _flags(booked=False, needs_review=False, retry=True), extract
+            state,
+            TAKEN + times,
+            _flags(booked=False, needs_review=False, retry=True),
+            extract,
+            service_id=offered.service_id,
         )
     except Unavailable:
         times = await _relist(tenant, state, adapter, offered.service_id, now)
@@ -365,21 +399,47 @@ async def book(
             UNAVAILABLE + times,
             _flags(booked=False, needs_review=False, retry=True),
             extract,
+            service_id=offered.service_id,
         )
     except IdempotencyConflict:
         state.idempotency_keys.add(key)
-        return _finish(state, REVIEW, _flags(booked=False, needs_review=True, retry=False), extract)
+        return _finish(
+            state,
+            REVIEW,
+            _flags(booked=False, needs_review=True, retry=False),
+            extract,
+            service_id=offered.service_id,
+        )
     state.idempotency_keys.add(key)
     try:
         returned = await adapter.get_booking(created.id)
     except UnknownBooking:
-        return _finish(state, REVIEW, _flags(booked=False, needs_review=True, retry=False), extract)
+        return _finish(
+            state,
+            REVIEW,
+            _flags(booked=False, needs_review=True, retry=False),
+            extract,
+            service_id=offered.service_id,
+        )
     if returned.slot.identity != created.slot.identity or returned.id != created.id:
-        return _finish(state, REVIEW, _flags(booked=False, needs_review=True, retry=False), extract)
+        return _finish(
+            state,
+            REVIEW,
+            _flags(booked=False, needs_review=True, retry=False),
+            extract,
+            service_id=offered.service_id,
+        )
     what = _spoken_what(tenant, offered.service_id)
     time = format_slot_time(returned.slot.start, tenant.tz)
     say = SUCCESS.format(what=what, time=time) + _deposit_clause(tenant, offered.service_id)
-    return _finish(state, say, _flags(booked=True, needs_review=False, retry=False), extract)
+    return _finish(
+        state,
+        say,
+        _flags(booked=True, needs_review=False, retry=False),
+        extract,
+        booking_id=created.id,
+        service_id=offered.service_id,
+    )
 
 
 def _finish(
@@ -387,9 +447,12 @@ def _finish(
     say: str,
     model: Mapping[str, object],
     extract: NumberExtractor,
+    *,
+    booking_id: str | None = None,
+    service_id: str | None = None,
 ) -> BookResult:
     admit_numbers(state, say, extract)
-    return BookResult(say=say, model=model)
+    return BookResult(say=say, model=model, booking_id=booking_id, service_id=service_id)
 
 
 def _flags(*, booked: bool, needs_review: bool, retry: bool) -> Mapping[str, object]:
