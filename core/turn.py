@@ -35,7 +35,7 @@ from core.llm import (
     ToolCallParseError,
 )
 from core.policy import Arm, Commit, Continue, GateResult, PolicyEngine, Reply, normalize_utterance
-from core.prompt import TOOLS, build, tool_result_messages
+from core.prompt import TOOLS, BuiltPrompt, build, tool_result_messages
 from core.state import (
     AgentLine,
     Callback,
@@ -80,8 +80,9 @@ READBACK = "I'll have them call you at {spoken}."
 BAD_NUMBER = "I didn't catch that. One more time, area code first?"
 GIVE_UP = "I'll have the team follow up with the number we have. Thanks for calling. Goodbye."
 
-_YES = frozenset({"yes", "yeah", "yep", "yup", "correct", "it is", "thats fine", "that is fine"})
-_NO = frozenset({"no", "nope", "no thanks", "different", "new number"})
+_YES_FIRST = frozenset({"yes", "yeah", "yep", "yup", "sure", "correct"})
+_NO_FIRST = frozenset({"no", "nope"})
+_NO_TOKENS = frozenset({"no", "nope"})
 _DIGIT_WORDS = (
     "zero",
     "one",
@@ -199,9 +200,13 @@ class _Session:
         self.ended: str | None = None
         self.extra: list[Message] = []
         self.rounds = 0
+        self.turn_start = 0
+        self.passed_model: list[str] = []
+        self.round_payloads: list[tuple[ToolCall, Mapping[str, object]]] = []
 
     async def caller_turn(self, utterance: str) -> None:
         result = await self.record_utterance(utterance)
+        self.turn_start = len(self.state.transcript)
         if isinstance(self.state.escalation, Committed):
             await self.replay_committed(utterance)
             return
@@ -288,11 +293,11 @@ class _Session:
             await self._end("callback")
             return
         if phase == "ask_best":
-            if folded in _YES:
+            if _is_yes(folded):
                 self.state.caller_number_confirmed = True
                 await self._finish_callback()
                 return
-            if folded in _NO:
+            if _is_no(folded):
                 self.state.callback_phase = "ask_digits"
                 await self.speak(ASK_DIGITS, "backend", history="include")
                 return
@@ -342,7 +347,8 @@ class _Session:
             await self.speak(HEDGE, "backend", history="include")
 
     async def _stream_once(self) -> None:
-        built = build(self.loop.tenant, self.state, extra=tuple(self.extra))
+        self.round_payloads = []
+        built = self._prompt()
         stream = self.loop.model.stream(
             built.messages,
             built.tools,
@@ -394,6 +400,7 @@ class _Session:
             if not await self._dispatch(call):
                 return
             self.rounds += 1
+        self._remember_round()
         await self._stream_once()
 
     async def _model_sentence(self, sentence: str) -> bool:
@@ -407,6 +414,7 @@ class _Session:
             extract=self.loop.extract,
         )
         if isinstance(checked, Pass):
+            self.passed_model.append(sentence)
             await self.speak(sentence, "model", history="include")
             return True
         assert isinstance(checked, Blocked)
@@ -470,7 +478,7 @@ class _Session:
                 )
         if name == "book":
             await self._booking_events(call, result)
-        self.extra.extend(tool_result_messages(call, result.model))
+        self.round_payloads.append((call, result.model))
         return True
 
     async def _run_tool(self, call: ToolCall) -> ToolResult:
@@ -576,6 +584,23 @@ class _Session:
                 payload={**base, "reason": "retry" if model.get("retry") else "refused"},
             )
         )
+
+    def _prompt(self) -> BuiltPrompt:
+        saved = self.state.transcript
+        self.state.transcript = saved[: self.turn_start]
+        try:
+            return build(self.loop.tenant, self.state, extra=tuple(self.extra))
+        finally:
+            self.state.transcript = saved
+
+    def _remember_round(self) -> None:
+        content = "".join(self.passed_model)
+        self.passed_model.clear()
+        calls = tuple(call for call, _payload in self.round_payloads)
+        self.extra.append(Message(role="assistant", content=content, tool_calls=calls))
+        for call, payload in self.round_payloads:
+            self.extra.append(tool_result_messages(call, payload)[1])
+        self.round_payloads = []
 
     async def speak(
         self,
@@ -695,6 +720,20 @@ class _Session:
                 payload={"reason": reason},
             )
         )
+
+
+def _is_yes(folded: str) -> bool:
+    words = folded.split()
+    if not words or words[0] not in _YES_FIRST:
+        return False
+    return all(word not in _NO_TOKENS for word in words)
+
+
+def _is_no(folded: str) -> bool:
+    words = folded.split()
+    if words and words[0] in _NO_FIRST:
+        return True
+    return "different" in words or "new number" in folded
 
 
 def _path_label(path: EmergencyEnd | Transfer | Callback) -> str:

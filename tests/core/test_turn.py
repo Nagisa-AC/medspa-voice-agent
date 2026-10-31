@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import ast
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+import pytest
 
 import core.turn
 from core.crypto import InMemoryKeyStore
@@ -19,7 +21,9 @@ from core.llm import (
     CannedText,
     CannedTool,
     CannedTurn,
+    Message,
     ScriptedLLM,
+    ToolSchema,
 )
 from core.numbers import find_numbers
 from core.policy import load_policy_engine
@@ -88,6 +92,30 @@ def _scripted(*turns: CannedTurn, mono: FakeMono | None = None) -> ScriptedLLM:
     if mono is None:
         return ScriptedLLM(turns)
     return ScriptedLLM(turns, sleep=mono.sleep, clock=mono)
+
+
+class RecordingLLM:
+    def __init__(self, inner: ScriptedLLM) -> None:
+        self.inner = inner
+        self.calls: list[tuple[Message, ...]] = []
+
+    def stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSchema],
+        *,
+        max_output_tokens: int,
+        first_token_timeout: float,
+        idle_timeout: float,
+    ) -> Any:
+        self.calls.append(tuple(messages))
+        return self.inner.stream(
+            messages,
+            tools,
+            max_output_tokens=max_output_tokens,
+            first_token_timeout=first_token_timeout,
+            idle_timeout=idle_timeout,
+        )
 
 
 async def collect(iterator: AsyncIterator[OutputChunk]) -> list[OutputChunk]:
@@ -245,6 +273,42 @@ async def test_quote_price_say_direct_before_follow_up() -> None:
     assert "$700" not in history
     assert "tool_invoked" in await kinds(log)
     assert "tool_result" in await kinds(log)
+
+
+async def test_in_turn_recall_is_user_assistant_tool_without_marker() -> None:
+    inner = _scripted(
+        CannedTurn(
+            id="q",
+            events=(
+                CannedText("Sure. "),
+                CannedTool(id="c1", name="quote_price", args={"service_text": "lip filler"}),
+                CannedDone("tool_calls"),
+            ),
+        ),
+        _text("follow", "Want me to look at times?"),
+    )
+    recorder = RecordingLLM(inner)
+    loop, state, _log, _store = await setup(model=inner)
+    loop.model = recorder
+    await collect(loop.handle_caller_turn(state, "how much is lip filler"))
+    assert len(recorder.calls) == 2
+    recall = [message for message in recorder.calls[1] if message.role != "system"]
+    assert [message.role for message in recall] == ["user", "assistant", "tool"]
+    user, assistant, tool = recall
+    assert user.content == "how much is lip filler"
+    assert assistant.content.startswith("Sure.")
+    assert assistant.tool_calls
+    assert assistant.tool_calls[0].name == "quote_price"
+    assert tool.role == "tool"
+    assert "[price quoted" not in assistant.content
+    assert "[price quoted" not in user.content
+    assert "[price quoted" not in tool.content
+    joined = "\n".join(message.content for message in recall)
+    assert "[price quoted for Dermal Filler]" not in joined
+    next_history = "\n".join(
+        m.content for m in build(GLOW, state).messages if m.role != "system"
+    )
+    assert "[price quoted for Dermal Filler]" in next_history
 
 
 async def test_lookup_faq_hit_is_marker_and_logged() -> None:
@@ -488,6 +552,44 @@ async def test_callback_confirm_then_promise_with_caller_id() -> None:
         for line in state.transcript
     )
     assert (await kinds(log)).count("sms_logged") == 1
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    ("yes please", "yeah that\u2019s fine", "yes it is"),
+)
+async def test_lenient_yes_confirms(utterance: str) -> None:
+    model = _scripted(_text("unused", "nope"))
+    loop, state, _log, _store = await setup(model=model, started=SUN)
+    await collect(loop.handle_caller_turn(state, "get me a real person"))
+    second = await collect(loop.handle_caller_turn(state, utterance))
+    assert GLOW.callback_promise in [chunk.text for chunk in second]
+    assert GOODBYE in [chunk.text for chunk in second]
+    assert second[-1].end_call is True
+    assert state.caller_number_confirmed is True
+    model.assert_never_called()
+
+
+async def test_lenient_no_asks_digits() -> None:
+    model = _scripted(_text("unused", "nope"))
+    loop, state, _log, _store = await setup(model=model, started=SUN)
+    await collect(loop.handle_caller_turn(state, "get me a real person"))
+    second = await collect(loop.handle_caller_turn(state, "no use my cell"))
+    assert ASK_DIGITS in [chunk.text for chunk in second]
+    assert GLOW.callback_promise not in [chunk.text for chunk in second]
+    assert state.caller_number_confirmed is False
+    model.assert_never_called()
+
+
+async def test_yes_no_wait_is_not_yes() -> None:
+    model = _scripted(_text("unused", "nope"))
+    loop, state, _log, _store = await setup(model=model, started=SUN)
+    await collect(loop.handle_caller_turn(state, "get me a real person"))
+    second = await collect(loop.handle_caller_turn(state, "yes no wait"))
+    assert GLOW.callback_promise not in [chunk.text for chunk in second]
+    assert state.caller_number_confirmed is False
+    assert second[-1].end_call is False
+    model.assert_never_called()
 
 
 async def test_callback_no_then_new_number() -> None:
