@@ -104,6 +104,8 @@ def test_new_state_starts_empty_except_seeded_numbers() -> None:
     assert s.caller_name is None
     assert s.caller_number is None
     assert s.caller_number_confirmed is False
+    assert s.callback_phase == "idle"
+    assert s.callback_digit_failures == 0
     assert s.escalation == NotEscalated()
     assert s.pending_transfer_number is None
 
@@ -404,6 +406,8 @@ FIELDS = {
     "caller_name",
     "caller_number",
     "caller_number_confirmed",
+    "callback_phase",
+    "callback_digit_failures",
     "idempotency_keys",
     "version",
 }

@@ -195,6 +195,8 @@ class PolicyEngine:
         hards = [trip for trip in hits if trip.outcome == "HARD"]
         if hards:
             return self._commit(hards[0], clinical)
+        if any(trip.name == "over_duration_budget" for trip in hits):
+            return Commit("over_duration_budget", "SOFT", clinical)
         replies = [trip for trip in hits if trip.outcome == "REPLY"]
         if replies:
             return self._reply(replies[0], clinical)
