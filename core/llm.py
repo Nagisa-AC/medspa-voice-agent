@@ -167,11 +167,26 @@ class ToolSchema:
     description: str
     parameters: Mapping[str, object]
 
+    def parameters_json(self) -> dict[str, object]:
+        """Plain dicts and lists, recursively, so json.dumps succeeds."""
+        converted = _jsonable(self.parameters)
+        if not isinstance(converted, dict):
+            raise TypeError("parameters must be a JSON object")
+        return converted
+
     def __repr__(self) -> str:
         return f"ToolSchema(name={self.name!r})"
 
     def __str__(self) -> str:
         return repr(self)
+
+
+def _jsonable(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item) for item in value]
+    return value
 
 
 class ModelStream(Protocol):

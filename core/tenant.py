@@ -418,7 +418,17 @@ def check_rules(tenant: Tenant, today: date) -> list[Issue]:
     issues += _service_rules(tenant.services)
     issues += _tier_rules(tenant.transfer_tiers, tenant.main_number)
     issues += _faq_rules(tenant.faq, today)
+    issues += _brace_rules("facts", tenant.facts)
+    issues += _brace_rules("policies", tenant.policies)
     return issues
+
+
+def _brace_rules(field: str, items: Mapping[str, str]) -> list[Issue]:
+    return [
+        Issue(f"{field}.{key}", "must not contain '{' or '}'")
+        for key, value in items.items()
+        if "{" in value or "}" in value
+    ]
 
 
 def _service_rules(services: tuple[Service, ...]) -> list[Issue]:

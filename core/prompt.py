@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from string import Formatter
 from types import MappingProxyType
@@ -144,6 +145,7 @@ class BuiltPrompt:
         return repr(self)
 
 
+@cache
 def load_template(path: Path) -> str:
     source = str(path)
     text = path.read_text(encoding="utf-8")
@@ -165,11 +167,11 @@ def build(
     state: CallState,
     *,
     extra: Sequence[Message] = (),
+    template: str | None = None,
     template_path: Path | None = None,
 ) -> BuiltPrompt:
-    path = template_path if template_path is not None else TEMPLATE_PATH
-    template = load_template(path)
-    system = _fill(template, tenant, source=str(path))
+    text = template if template is not None else load_template(template_path or TEMPLATE_PATH)
+    system = _fill(text, tenant)
     return BuiltPrompt(
         messages=(Message(role="system", content=system), *_history(state), *extra),
         tools=TOOLS,
@@ -206,16 +208,13 @@ def _agent_content(line: AgentLine) -> str | None:
     return _FAQ_MARKER
 
 
-def _fill(template: str, tenant: Tenant, *, source: str) -> str:
-    filled = template.format(
+def _fill(template: str, tenant: Tenant) -> str:
+    return template.format(
         spa_name=tenant.name,
         service_names=_english_list(tuple(service.name for service in tenant.services)),
         facts=_bullets(tenant.facts),
         policies=_bullets(tenant.policies),
     )
-    if "{" in filled:
-        raise PromptFormatError(source, "leftover '{' after fill")
-    return filled
 
 
 def _english_list(names: Sequence[str]) -> str:

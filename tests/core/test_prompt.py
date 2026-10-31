@@ -305,6 +305,14 @@ def test_four_schemas_and_book_requires_confirmed_boolean() -> None:
             assert leak not in tool.description
 
 
+def test_parameters_json_dumps_and_round_trips() -> None:
+    for tool in TOOLS:
+        payload = tool.parameters_json()
+        assert type(payload) is dict
+        encoded = json.dumps(payload)
+        assert json.loads(encoded) == payload
+
+
 # --------------------------------------------------------------------------- template load
 
 
@@ -328,12 +336,6 @@ def test_load_rejects_invalid_and_formatted_placeholders(tmp_path: Path) -> None
     spec.write_text("{spa_name:>10} {service_names} {facts} {policies}\n")
     with pytest.raises(PromptFormatError, match="bare"):
         load_template(spec)
-
-
-def test_leftover_brace_after_fill_fails() -> None:
-    tenant = GLOW.model_copy(update={"facts": {"hours": "Open {now}."}})
-    with pytest.raises(PromptFormatError, match="leftover"):
-        build(tenant, fresh())
 
 
 # --------------------------------------------------------------------------- privacy and imports
@@ -382,6 +384,7 @@ def test_prompt_module_imports_are_closed() -> None:
         "core.state",
         "core.tenant",
         "dataclasses",
+        "functools",
         "json",
         "pathlib",
         "string",
