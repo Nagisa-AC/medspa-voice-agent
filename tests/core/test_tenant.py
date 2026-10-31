@@ -23,6 +23,7 @@ from core.tenant import (
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = Path(__file__).parent / "fixtures" / "tenants" / "test_spa.yaml"
+GLOW = ROOT / "tenants" / "glow_aesthetics.yaml"
 TODAY = date(2026, 10, 29)
 
 Data = dict[str, Any]
@@ -283,6 +284,16 @@ def test_text_maps_are_read_only(field: str) -> None:
         mapping["hours"] = "changed"
     with pytest.raises(TypeError):
         del mapping[next(iter(mapping))]
+
+
+def test_glow_policy_brace_is_rejected_at_load() -> None:
+    data = read_yaml(GLOW)
+    assert isinstance(data, dict)
+    data = copy.deepcopy(data)
+    key = next(iter(data["policies"]))
+    data["policies"][key] = "{x}"
+    paths = [issue.path for issue in issues_for(data, source=str(GLOW))]
+    assert f"policies.{key}" in paths
 
 
 def test_missing_text_maps_default_to_read_only() -> None:

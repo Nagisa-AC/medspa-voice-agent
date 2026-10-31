@@ -454,3 +454,28 @@ def test_state_module_imports_no_decision_code() -> None:
 def test_agent_lines_keep_origin() -> None:
     line = AgentLine("Hello.", "backend", NOW)
     assert line.origin == "backend"
+    assert (line.history, line.marker, line.label) == ("include", None, None)
+
+
+def test_agent_line_marker_price_needs_label() -> None:
+    with pytest.raises(ValueError, match="label"):
+        AgentLine("x", "backend", NOW, history="marker", marker="price")
+    with pytest.raises(ValueError, match="label"):
+        AgentLine("x", "backend", NOW, history="marker", marker="price", label="  ")
+
+
+def test_agent_line_marker_faq_forbids_label() -> None:
+    with pytest.raises(ValueError, match="label"):
+        AgentLine("x", "backend", NOW, history="marker", marker="faq", label="Botox")
+
+
+def test_agent_line_marker_needs_kind() -> None:
+    with pytest.raises(ValueError, match="marker"):
+        AgentLine("x", "backend", NOW, history="marker")
+
+
+def test_agent_line_include_and_omit_forbid_marker_and_label() -> None:
+    with pytest.raises(ValueError, match="marker"):
+        AgentLine("x", "backend", NOW, history="include", marker="price")
+    with pytest.raises(ValueError, match="label"):
+        AgentLine("x", "backend", NOW, history="omit", label="Botox")
