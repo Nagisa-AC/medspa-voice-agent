@@ -1,0 +1,13 @@
+tenant: glow
+started: "2026-11-08T14:00:00-05:00"
+clock: "2026-11-08T14:07:00-05:00"
+utterances:
+  - "hello there friend"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "number you're calling from"
+  committed:
+    trip: over_duration_budget
+    path: callback
+  model_called: false

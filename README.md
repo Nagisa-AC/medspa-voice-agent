@@ -7,5 +7,5 @@
 | `make fmt` | Auto-fix lint and formatting |
 | `make typecheck` | mypy strict |
 | `make test` | pytest |
-| `make eval` | Eval harness (placeholder until it exists) |
+| `make eval` | Eval harness (ScriptedLLM cases; fails the build on any failure) |
 | `make check` | Everything CI runs |

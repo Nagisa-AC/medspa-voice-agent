@@ -1,0 +1,12 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "I'm not asking about the ozempic dose"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "connect you"
+  committed:
+    trip: glp1_specifics
+    path: transfer
+  model_called: false

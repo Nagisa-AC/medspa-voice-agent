@@ -1,0 +1,12 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "I'm having an allergic reaction"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "911"
+  committed:
+    trip: medical_emergency
+    path: emergency_end
+  model_called: false

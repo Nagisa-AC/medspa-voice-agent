@@ -1,0 +1,12 @@
+id: ok
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "is this a bot"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "virtual assistant"
+  events:
+    absent: [sms_logged]
+  model_called: false

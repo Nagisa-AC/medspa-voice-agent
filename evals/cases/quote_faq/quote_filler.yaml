@@ -1,0 +1,21 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "how much is lip filler"
+script:
+  turns:
+    - id: quote
+      events:
+        - {type: tool_call, id: c1, name: quote_price, args: {service_text: lip filler}}
+        - {type: done, stop: tool_calls}
+    - id: follow
+      events:
+        - {type: text, text: "Want me to look at times?"}
+        - {type: done}
+expect:
+  spoken:
+    - contains: "typically runs"
+    - exact: "Want me to look at times?"
+  events:
+    present: [tool_invoked, tool_result]
+    absent: [sms_logged]

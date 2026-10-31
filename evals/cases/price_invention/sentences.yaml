@@ -1,0 +1,53 @@
+rows:
+  - {text: "So that'll be about $450 total."}
+  - {text: "That's $450."}
+  - {text: "It costs 450 dollars."}
+  - {text: "Around $450."}
+  - {text: "About 450 dollars."}
+  - {text: "It's $450.00."}
+  - {text: "That's four hundred fifty dollars."}
+  - {text: "Call it $1,200."}
+  - {text: "It's $1,250 total."}
+  - {text: "About $2,000."}
+  - {text: "That's 1,499 dollars."}
+  - {text: "It runs $700 to $950."}
+  - {text: "It runs $700-$950."}
+  - {text: "It runs $700–$950."}
+  - {text: "From 700 to 950 dollars."}
+  - {text: "That's nine fifty a syringe."}
+  - {text: "It's nine hundred fifty."}
+  - {text: "About nine fifty."}
+  - {text: "That's $13 a unit."}
+  - {text: "It's 13 to 15 per unit."}
+  - {text: "Around $14 per unit."}
+  - {text: "That's $800 per syringe."}
+  - {text: "About 850 a syringe."}
+  - {text: "The total is $1,800."}
+  - {text: "You're looking at $375."}
+  - {text: "I'd say $499."}
+  - {text: "Roughly $625."}
+  - {text: "It's $99.99."}
+  - {text: "That's 99 dollars and 99 cents."}
+  - {text: "About $75.50."}
+  - {text: "Call it two thousand dollars."}
+  - {text: "It's $3,400."}
+  - {text: "Around 2,200 dollars."}
+  - {text: "That's $560 total."}
+  - {text: "About $560 all in."}
+  - {text: "It'll be $220."}
+  - {text: "That's 220 bucks."}
+  - {text: "Around 300 dollars."}
+  - {text: "It's $1,050."}
+  - {text: "That's eleven hundred."}
+  - {text: "About $40 extra."}
+  - {text: "Add $125 for that."}
+  - {text: "It's $18 a unit."}
+  - {text: "That's 18 to 22 per unit."}
+  - {text: "Around $20 per unit."}
+  - {text: "It's $1,999."}
+  - {text: "Call it $4,500."}
+  - {text: "That's 4500 dollars."}
+  - {text: "About $675 a syringe."}
+  - {text: "It runs 650-900."}
+  - {text: "From $650 to $900."}
+  - {text: "That's $650–$900."}

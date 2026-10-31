@@ -1,0 +1,12 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "I have a fever"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "connect you"
+  committed:
+    trip: adverse_event
+    path: transfer
+  model_called: false

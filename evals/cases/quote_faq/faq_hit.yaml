@@ -1,0 +1,21 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "how long does botox last"
+script:
+  turns:
+    - id: faq
+      events:
+        - {type: tool_call, id: c1, name: lookup_faq, args: {question_text: how long does botox last}}
+        - {type: done, stop: tool_calls}
+    - id: follow
+      events:
+        - {type: text, text: "Anything else?"}
+        - {type: done}
+expect:
+  spoken:
+    - contains: "three to four months"
+    - exact: "Anything else?"
+  events:
+    present: [faq_served]
+    absent: [sms_logged]

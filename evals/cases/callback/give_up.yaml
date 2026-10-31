@@ -1,0 +1,16 @@
+tenant: glow
+clock: "2026-11-08T14:00:00-05:00"
+caller_id: null
+utterances:
+  - "get me a real person"
+  - "not a number"
+  - "still not"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "Area code first"
+    - contains: "follow up with the number we have"
+  committed:
+    trip: explicit_human_request
+    path: callback
+  model_called: false

@@ -1,0 +1,9 @@
+turns:
+  - id: ok
+    events:
+      - {type: text, text: "Happy to help."}
+      - {type: done}
+  - id: unused
+    events:
+      - {type: text, text: "nope"}
+      - {type: done}

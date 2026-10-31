@@ -293,6 +293,17 @@ class ScriptedLLM:
     ) -> ScriptedLLM:
         return cls(_load_turns(path), sleep=sleep, clock=clock)
 
+    @classmethod
+    def from_mapping(
+        cls,
+        raw: object,
+        *,
+        source: str = "<memory>",
+        sleep: Sleep | None = None,
+        clock: Clock | None = None,
+    ) -> ScriptedLLM:
+        return cls(_turns_from_mapping(raw, source), sleep=sleep, clock=clock)
+
     @property
     def call_count(self) -> int:
         return self._calls
@@ -457,6 +468,10 @@ def _load_turns(path: Path) -> tuple[CannedTurn, ...]:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ScriptFormatError(source, f"invalid YAML: {exc}") from None
+    return _turns_from_mapping(raw, source)
+
+
+def _turns_from_mapping(raw: object, source: str) -> tuple[CannedTurn, ...]:
     if not isinstance(raw, dict):
         raise ScriptFormatError(source, "script must be a mapping")
     extra = set(raw) - {"turns"}

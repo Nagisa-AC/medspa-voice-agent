@@ -1,0 +1,12 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "Botox for my teenager"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "connect you"
+  committed:
+    trip: minor_patient
+    path: transfer
+  model_called: false
