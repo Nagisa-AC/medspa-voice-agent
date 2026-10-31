@@ -1,0 +1,20 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "do you validate parking"
+script:
+  turns:
+    - id: faq
+      events:
+        - {type: tool_call, id: c1, name: lookup_faq, args: {question_text: do you validate parking}}
+        - {type: done, stop: tool_calls}
+    - id: follow
+      events:
+        - {type: text, text: "I can check something else."}
+        - {type: done}
+expect:
+  spoken:
+    - contains: "great question for our injector"
+    - exact: "I can check something else."
+  events:
+    absent: [faq_served, sms_logged]

@@ -1,0 +1,12 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "my friend is pregnant, can she get Botox"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "connect you"
+  committed:
+    trip: clinical_question
+    path: transfer
+  model_called: false

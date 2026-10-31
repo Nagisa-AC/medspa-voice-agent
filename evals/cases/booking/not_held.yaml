@@ -1,0 +1,27 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "book botox"
+script:
+  turns:
+    - id: avail
+      events:
+        - {type: tool_call, id: c1, name: check_availability, args: {service_text: botox}}
+        - {type: done, stop: tool_calls}
+    - id: book
+      events:
+        - type: tool_call
+          id: c2
+          name: book
+          args:
+            slot_start_iso: "2026-11-16T14:00:00"
+            patient_name: Dana Reyes
+            patient_phone: "+12035551234"
+            confirmed: true
+        - {type: done, stop: tool_calls}
+expect:
+  spoken:
+    - contains: "don't have that time held"
+  events:
+    present: [booking_attempted]
+    absent: [booking_confirmed]

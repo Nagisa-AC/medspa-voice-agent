@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import ast
+from functools import partial
+from pathlib import Path
+
+import pytest
+
+import evals.harness
+from core.guardrail import load_output_pack
+from core.llm import ScriptedLLM
+from core.numbers import find_numbers
+from core.policy import load_input_pack
+from core.tenant import extra_price_words, load_tenant_file
+from core.turn import OutputChunk
+from evals.harness import (
+    CaseLoadError,
+    check_model_order,
+    format_report,
+    load_case_path,
+    load_cases,
+    run_case,
+)
+from tests.core.test_policy import PATTERN_CASES
+
+ROOT = Path(__file__).resolve().parents[2]
+FIX = Path(__file__).parent / "fixtures"
+TODAY = __import__("datetime").date(2026, 10, 29)
+GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
+PACK = load_output_pack(ROOT / "packs" / "medspa.output.yaml")
+_WORDS = extra_price_words(GLOW)
+EXTRACT = partial(
+    find_numbers,
+    extra_price_words=_WORDS.extra_price_words,
+    service_words=_WORDS.service_words,
+)
+
+
+def test_loader_rejects_unknown_field(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        "tenant: glow\nclock: '2026-11-03T11:00:00-05:00'\n"
+        "utterances: ['hi']\nscript_path: scripts/unused.yaml\nnope: 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CaseLoadError, match="unknown fields") as info:
+        load_case_path(path)
+    assert "hi" not in str(info.value)
+
+
+def test_loader_rejects_naive_clock(tmp_path: Path) -> None:
+    path = tmp_path / "naive.yaml"
+    path.write_text(
+        "tenant: glow\nclock: '2026-11-03T11:00:00'\n"
+        "utterances: ['hi']\nscript_path: scripts/unused.yaml\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CaseLoadError, match="timezone-aware"):
+        load_case_path(path)
+
+
+def test_loader_rejects_unknown_tenant(tmp_path: Path) -> None:
+    path = tmp_path / "tenant.yaml"
+    path.write_text(
+        "tenant: missing\nclock: '2026-11-03T11:00:00-05:00'\n"
+        "utterances: ['hi']\nscript_path: scripts/unused.yaml\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CaseLoadError, match="tenant"):
+        load_case_path(path)
+
+
+def test_loader_rejects_empty_utterances(tmp_path: Path) -> None:
+    path = tmp_path / "empty.yaml"
+    path.write_text(
+        "tenant: glow\nclock: '2026-11-03T11:00:00-05:00'\n"
+        "utterances: []\nscript_path: scripts/unused.yaml\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CaseLoadError, match="utterances"):
+        load_case_path(path)
+
+
+def test_every_pack_pattern_has_a_case() -> None:
+    expected: set[tuple[str, str]] = set()
+    for name in ("universal.yaml", "medspa.yaml"):
+        pack = load_input_pack(ROOT / "packs" / name)
+        for trip in pack.tripwires:
+            for pattern in trip.patterns:
+                expected.add((trip.name, pattern.id))
+    got = {(trip, pid) for trip, pid, _pos, _neg in PATTERN_CASES}
+    assert got == expected
+    cases = load_cases()
+    ids = {case.id for case in cases if case.category in {"escalation", "identity"}}
+    missing = {f"{trip}__{pid}" for trip, pid in expected} - ids
+    assert missing == set()
+
+
+def test_clinical_rows_cover_every_output_pattern() -> None:
+    raw = __import__("yaml").safe_load(
+        (ROOT / "evals" / "cases" / "clinical_output" / "sentences.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    rows = raw["rows"]
+    assert len(rows) >= 30
+    covered = {row["pattern"] for row in rows}
+    pack_ids = {pattern.id for pattern in PACK.patterns}
+    assert pack_ids <= covered
+
+
+def test_sentence_tables_expand_ids() -> None:
+    cases = load_cases()
+    price = [case for case in cases if case.category == "price_invention"]
+    clinical = [case for case in cases if case.category == "clinical_output"]
+    assert [case.id for case in price] == [f"sentences_{i}" for i in range(len(price))]
+    assert len(price) >= 50
+    assert price[0].never_spoken
+    assert [case.id for case in clinical] == [f"sentences_{i}" for i in range(len(clinical))]
+    assert len(clinical) >= 30
+
+
+def test_price_invention_meets_floor() -> None:
+    raw = __import__("yaml").safe_load(
+        (ROOT / "evals" / "cases" / "price_invention" / "sentences.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(raw["rows"]) >= 50
+
+
+async def test_planted_identity_passes() -> None:
+    case = load_case_path(FIX / "identity" / "ok.yaml")
+    assert await run_case(case) is None
+
+
+async def test_planted_emergency_model_call_omits_utterance() -> None:
+    case = load_case_path(FIX / "escalation" / "emergency_model.yaml")
+    failure = await run_case(case)
+    assert failure is not None
+    assert failure.check == "spoken_missing"
+    from evals.harness import Report
+
+    report = Report()
+    report.add(case, failure)
+    text = format_report(report)
+    assert "emergency_model" in text
+    assert "spoken_missing" in text
+    assert "breathe" not in text
+    assert case.utterances[0] not in text
+
+
+async def test_text_promise_omits_sentence() -> None:
+    case = load_case_path(FIX / "continue" / "text_promise.yaml")
+    failure = await run_case(case)
+    assert failure is not None
+    assert failure.check == "text_promise"
+    from evals.harness import Report
+
+    report = Report()
+    report.add(case, failure)
+    text = format_report(report)
+    assert "text_promise" in text
+    assert "I will text you" not in text
+
+
+def test_model_chunk_before_quote_is_caught() -> None:
+    chunks = (
+        OutputChunk(text="So that's $700.", origin="model"),
+        OutputChunk(
+            text="Dermal Filler typically runs $700 to $950 per syringe.",
+            origin="backend",
+        ),
+    )
+    assert (
+        check_model_order(
+            chunks,
+            allowed_amounts=set(),
+            allowed_numbers=set(),
+            pack=PACK,
+            extract=EXTRACT,
+        )
+        == "model_sentence"
+    )
+    reversed_chunks = (chunks[1], chunks[0])
+    assert (
+        check_model_order(
+            reversed_chunks,
+            allowed_amounts=set(),
+            allowed_numbers=set(),
+            pack=PACK,
+            extract=EXTRACT,
+        )
+        is None
+    )
+
+
+def test_harness_does_not_import_retell() -> None:
+    tree = ast.parse(Path(evals.harness.__file__).read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert "retell" not in imported
+
+
+def test_scripted_from_mapping_round_trips() -> None:
+    llm = ScriptedLLM.from_mapping(
+        {
+            "turns": [
+                {
+                    "id": "one",
+                    "events": [{"type": "text", "text": "hi"}, {"type": "done"}],
+                }
+            ]
+        }
+    )
+    assert llm.call_count == 0

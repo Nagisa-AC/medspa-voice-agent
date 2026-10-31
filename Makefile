@@ -18,6 +18,6 @@ test:
 	uv run pytest
 
 eval:
-	@echo "eval: no harness yet (lands in M1 task 20); 0 cases run"
+	uv run python -m evals
 
 check: lint typecheck test eval

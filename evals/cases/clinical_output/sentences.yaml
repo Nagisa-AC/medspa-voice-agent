@@ -1,0 +1,33 @@
+rows:
+  - {text: "The side effects are mild.", pattern: side_effects}
+  - {text: "The main risks are bruising.", pattern: risks}
+  - {text: "This is safe for most people.", pattern: safe}
+  - {text: "There can be some pain at the site.", pattern: pain}
+  - {text: "It may hurt a little.", pattern: hurt}
+  - {text: "Your lip can feel numb.", pattern: numb}
+  - {text: "Downtime is usually a day.", pattern: downtime}
+  - {text: "Recovery is quick.", pattern: recovery}
+  - {text: "It heals within a week.", pattern: heal}
+  - {text: "Some swelling is expected.", pattern: swelling}
+  - {text: "You might bruise.", pattern: bruise}
+  - {text: "Filler lasts about a year.", pattern: lasts}
+  - {text: "It wears off over time.", pattern: wears_off}
+  - {text: "Results show in two weeks.", pattern: results}
+  - {text: "The dose is decided later.", pattern: dose}
+  - {text: "That's a 2 mg injection.", pattern: mg}
+  - {text: "They use twenty units.", pattern: units}
+  - {text: "There are contraindications.", pattern: contraindication}
+  - {text: "Not during pregnancy.", pattern: pregnancy}
+  - {text: "Skip it if you are breastfeeding.", pattern: breastfeeding}
+  - {text: "Tell us about any allergy.", pattern: allergy}
+  - {text: "You are a good candidate.", pattern: candidate}
+  - {text: "Aftercare is simple.", pattern: aftercare}
+  - {text: "Avoid exercise for a day.", pattern: avoid_aftercare}
+  - {text: "It's normal and nothing to worry about.", pattern: reassurance}
+  - {text: "A headache can happen.", pattern: symptoms}
+  - {text: "Take ibuprofen if you need it.", pattern: advice}
+  - {text: "Stop blood thinners first.", pattern: blood_thinners}
+  - {text: "Redness and tenderness are common.", pattern: symptoms}
+  - {text: "It should resolve on its own.", pattern: reassurance}
+  - {text: "Avoid alcohol tonight.", pattern: avoid_aftercare}
+  - {text: "You'll be fine by Friday.", pattern: reassurance}

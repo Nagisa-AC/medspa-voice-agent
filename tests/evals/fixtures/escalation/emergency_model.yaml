@@ -1,0 +1,13 @@
+id: emergency_model
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "I can't breathe"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - exact: "this-line-is-not-spoken"
+  committed:
+    trip: medical_emergency
+    path: emergency_end
+  model_called: false
