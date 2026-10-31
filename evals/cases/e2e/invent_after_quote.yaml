@@ -1,0 +1,29 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "how much is lip filler"
+  - "ok"
+script:
+  turns:
+    - id: quote
+      events:
+        - {type: tool_call, id: c1, name: quote_price, args: {service_text: lip filler}}
+        - {type: done, stop: tool_calls}
+    - id: after_quote
+      events:
+        - {type: text, text: "Want me to look at times?"}
+        - {type: done}
+    - id: invent
+      events:
+        - {type: text, text: "So that'll be about $450 total."}
+        - {type: done}
+expect:
+  spoken:
+    - contains: "typically runs $700 to $950"
+    - exact: "Let me get you an exact number on that."
+  never_spoken:
+    - "So that'll be about $450 total."
+  history:
+    - {marker: price, label: "Dermal Filler"}
+  events:
+    absent: [booking_attempted, booking_confirmed, sms_logged]

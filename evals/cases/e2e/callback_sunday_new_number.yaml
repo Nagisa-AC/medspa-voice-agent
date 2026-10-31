@@ -1,0 +1,21 @@
+tenant: glow
+clock: "2026-11-08T14:00:00-05:00"
+utterances:
+  - "get me a real person"
+  - "no"
+  - "203 555 0199"
+script_path: scripts/unused.yaml
+expect:
+  spoken:
+    - contains: "number you're calling from"
+    - contains: "Area code first"
+    - contains: "I'll have them call you at"
+    - contains: "call you back"
+    - exact: "Thanks for calling. Goodbye."
+  committed:
+    trip: explicit_human_request
+    path: callback
+  events:
+    present: [sms_logged, call_ended]
+    absent: [booking_confirmed]
+  model_called: false

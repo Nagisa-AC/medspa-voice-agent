@@ -748,14 +748,12 @@ def _tool_tag(
     name: str, model: Mapping[str, object], tenant: Tenant
 ) -> tuple[HistoryKind, MarkerKind | None, str | None]:
     if name == "quote_price":
-        label = "a treatment"
         service_id = model.get("service_id")
         if model.get("found") is True and isinstance(service_id, str):
             for service in tenant.services:
-                if service.id == service_id:
-                    label = service.name
-                    break
-        return "marker", "price", label
+                if service.id == service_id and service.quotable:
+                    return "marker", "price", service.name
+        return "include", None, None
     if name == "lookup_faq":
         return "marker", "faq", None
     if name == "book":

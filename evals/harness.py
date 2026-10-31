@@ -21,8 +21,9 @@ from core.events import Event, InMemoryEventLog
 from core.guardrail import Blocked, OutputPack, check_sentence, load_output_pack
 from core.llm import ScriptedLLM
 from core.numbers import find_numbers
-from core.policy import load_input_pack, load_policy_engine
+from core.policy import load_input_pack, load_policy_engine, normalize_utterance
 from core.state import (
+    AgentLine,
     CallerLine,
     CallState,
     Committed,
@@ -33,7 +34,7 @@ from core.state import (
 )
 from core.tenant import extra_price_words, load_tenant_file
 from core.turn import NUMBER_HEDGE, OutputChunk, TurnLoop
-from integrations.booking import MockBookingAdapter, Slot
+from integrations.booking import MockBookingAdapter, Patient, Slot, SlotTaken, Unavailable
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES_DIR = Path(__file__).parent / "cases"
@@ -54,12 +55,19 @@ _CASE_KEYS = frozenset(
         "script_path",
         "expect",
         "hooks",
+        "clock_at",
     }
 )
-_EXPECT_KEYS = frozenset({"spoken", "committed", "events", "model_called"})
+_EXPECT_KEYS = frozenset(
+    {"spoken", "committed", "events", "model_called", "history", "history_absent", "never_spoken"}
+)
 _COMMITTED_KEYS = frozenset({"trip", "path"})
 _EVENTS_KEYS = frozenset({"present", "absent"})
-_HOOK_KEYS = frozenset({"after", "fail_next_create", "hide_next_booking", "rewrite_offer"})
+_HOOK_KEYS = frozenset(
+    {"after", "fail_next_create", "hide_next_booking", "rewrite_offer", "occupy_first"}
+)
+_HISTORY_MARKERS = frozenset({"price", "faq"})
+OCCUPY_PHONE = "+12035550111"
 _PATHS = frozenset({"emergency_end", "transfer", "callback"})
 _TENANTS = frozenset({"glow", "test_spa"})
 _TEXT_PROMISE = re.compile(
@@ -100,11 +108,18 @@ class EventExpect:
 
 
 @dataclass(frozen=True)
+class HistoryExpect:
+    marker: Literal["price", "faq"]
+    label: str | None = None
+
+
+@dataclass(frozen=True)
 class Hooks:
     after: int = 0
     fail_next_create: bool = False
     hide_next_booking: bool = False
     rewrite_offer: Literal["unavailable", "dst"] | None = None
+    occupy_first: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,6 +139,9 @@ class EvalCase:
     model_called: bool | None
     hooks: Hooks
     never_spoken: tuple[str, ...]
+    clock_at: tuple[tuple[int, datetime], ...]
+    history: tuple[HistoryExpect, ...]
+    history_absent: tuple[HistoryExpect, ...]
     source: str
 
 
@@ -228,6 +246,9 @@ def _load_sentences(
                 model_called=None,
                 hooks=Hooks(),
                 never_spoken=(text,),
+                clock_at=(),
+                history=(),
+                history_absent=(),
                 source=f"{path}:{index}",
             )
         )
@@ -303,6 +324,10 @@ def _load_case(
     if model_called is not None and not isinstance(model_called, bool):
         raise CaseLoadError(source, "expect.model_called must be a boolean")
     hooks = _load_hooks(raw.get("hooks"), source)
+    clock_at = _load_clock_at(raw.get("clock_at"), source)
+    history = _load_history(expect.get("history"), source, "expect.history")
+    history_absent = _load_history(expect.get("history_absent"), source, "expect.history_absent")
+    never_spoken = _load_never_spoken(expect.get("never_spoken"), source)
     _ = cases_dir
     return EvalCase(
         id=case_id,
@@ -319,7 +344,10 @@ def _load_case(
         events=events,
         model_called=model_called,
         hooks=hooks,
-        never_spoken=(),
+        never_spoken=never_spoken,
+        clock_at=clock_at,
+        history=history,
+        history_absent=history_absent,
         source=source,
     )
 
@@ -391,9 +419,12 @@ def _load_hooks(raw: object, source: str) -> Hooks:
         raise CaseLoadError(source, "hooks.after must be an int >= 0")
     fail_next = raw.get("fail_next_create", False)
     hide_next = raw.get("hide_next_booking", False)
+    occupy_first = raw.get("occupy_first", False)
     rewrite = raw.get("rewrite_offer")
     if not isinstance(fail_next, bool) or not isinstance(hide_next, bool):
         raise CaseLoadError(source, "hooks flags must be booleans")
+    if not isinstance(occupy_first, bool):
+        raise CaseLoadError(source, "hooks.occupy_first must be a boolean")
     if rewrite is not None and rewrite not in {"unavailable", "dst"}:
         raise CaseLoadError(source, "hooks.rewrite_offer is invalid")
     return Hooks(
@@ -401,7 +432,57 @@ def _load_hooks(raw: object, source: str) -> Hooks:
         fail_next_create=fail_next,
         hide_next_booking=hide_next,
         rewrite_offer=rewrite,
+        occupy_first=occupy_first,
     )
+
+
+def _load_clock_at(raw: object, source: str) -> tuple[tuple[int, datetime], ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict) or not raw:
+        raise CaseLoadError(source, "clock_at must be a non-empty mapping")
+    found: list[tuple[int, datetime]] = []
+    for key, value in raw.items():
+        index = key
+        if isinstance(key, str) and key.isdigit():
+            index = int(key)
+        if not isinstance(index, int) or isinstance(index, bool) or index < 1:
+            raise CaseLoadError(source, "clock_at keys must be positive ints")
+        if not isinstance(value, str):
+            raise CaseLoadError(source, "clock_at values must be ISO timestamps")
+        found.append((index, _parse_clock(value, source, "clock_at")))
+    return tuple(found)
+
+
+def _load_history(raw: object, source: str, field: str) -> tuple[HistoryExpect, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise CaseLoadError(source, f"{field} must be a list")
+    found: list[HistoryExpect] = []
+    for index, item in enumerate(raw):
+        loc = f"{field}[{index}]"
+        if not isinstance(item, dict):
+            raise CaseLoadError(source, f"{loc} must be a mapping")
+        extra = set(item) - {"marker", "label"}
+        if extra:
+            raise CaseLoadError(source, f"{loc} unknown fields {sorted(extra)}")
+        marker = item.get("marker")
+        if marker not in _HISTORY_MARKERS:
+            raise CaseLoadError(source, f"{loc}.marker must be price or faq")
+        label = item.get("label")
+        if label is not None and (not isinstance(label, str) or not label):
+            raise CaseLoadError(source, f"{loc}.label must be a non-empty string")
+        found.append(HistoryExpect(marker="price" if marker == "price" else "faq", label=label))
+    return tuple(found)
+
+
+def _load_never_spoken(raw: object, source: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(item, str) and item for item in raw):
+        raise CaseLoadError(source, "expect.never_spoken must be a list of non-empty strings")
+    return tuple(raw)
 
 
 def _parse_clock(value: str, source: str, field: str) -> datetime:
@@ -488,13 +569,16 @@ async def run_case(
     state.caller_number = case.caller_id
     await store.create(state)
 
+    now = case.clock
+
     def clock() -> datetime:
-        return case.clock
+        return now
 
     adapter = MockBookingAdapter.from_yaml(
         ROOT / "tenants" / "glow_aesthetics.mock.yaml", tz=tenant.tz, clock=clock
     )
     model = _script(case)
+    occupied_start: str | None = None
     loop = loop_cls(
         tenant,
         store,
@@ -510,7 +594,10 @@ async def run_case(
     spoken: list[OutputChunk] = []
     async for chunk in loop.connect(state):
         spoken.append(chunk)
+    jumps = dict(case.clock_at)
     for index, utterance in enumerate(case.utterances, start=1):
+        if index in jumps:
+            now = jumps[index]
         start_amounts = set(state.allowed_amounts)
         start_numbers = set(state.allowed_numbers)
         before_calls = model.call_count
@@ -532,8 +619,10 @@ async def run_case(
         if order is not None:
             return _fail(case, order)
         if case.hooks.after == index:
-            _apply_hooks(case.hooks, state, adapter)
-    return await _check_expect(case, state, spoken, log, model, adapter, tenant)
+            occupied_start = await _apply_hooks(case.hooks, state, adapter, tenant.tz)
+    return await _check_expect(
+        case, state, spoken, log, model, adapter, tenant, occupied_start=occupied_start
+    )
 
 
 def _script(case: EvalCase) -> ScriptedLLM:
@@ -552,10 +641,36 @@ def _tenant(name: str) -> Any:
     )
 
 
-def _apply_hooks(hooks: Hooks, state: CallState, adapter: MockBookingAdapter) -> None:
+async def _apply_hooks(
+    hooks: Hooks, state: CallState, adapter: MockBookingAdapter, tz: ZoneInfo
+) -> str | None:
     if not state.offered_slots:
-        return
+        return None
     first = state.offered_slots[0]
+    occupied: str | None = None
+    if hooks.occupy_first:
+        local = first.start.astimezone(tz).replace(microsecond=0)
+        occupied = local.strftime("%Y-%m-%dT%H:%M:%S")
+        # One opening is several provider/room pairs; occupy the whole start so
+        # relist cannot reuse the same wall-clock.
+        for provider in adapter._schedule.providers:
+            for room in adapter._schedule.rooms:
+                identity = (first.start, provider.id, room.id)
+                taken = Slot(
+                    start=first.start,
+                    end=first.end,
+                    provider_id=provider.id,
+                    room_id=room.id,
+                    version=adapter._versions.get(identity, 0),
+                )
+                try:
+                    await adapter.create_booking(
+                        idempotency_key=f"eval-occupy-first-{provider.id}-{room.id}",
+                        slot=taken,
+                        patient=Patient(name="Other Guest", phone=OCCUPY_PHONE),
+                    )
+                except (SlotTaken, Unavailable):
+                    continue
     if hooks.fail_next_create:
         adapter.fail_next_create(
             Slot(
@@ -602,6 +717,7 @@ def _apply_hooks(hooks: Hooks, state: CallState, adapter: MockBookingAdapter) ->
                 version=0,
             ),
         ]
+    return occupied
 
 
 async def _check_expect(
@@ -612,6 +728,7 @@ async def _check_expect(
     model: ScriptedLLM,
     adapter: MockBookingAdapter,
     tenant: Any,
+    occupied_start: str | None = None,
 ) -> CaseFailure | None:
     texts = [chunk.text for chunk in spoken]
     if not _spoken_subsequence(texts, case.spoken):
@@ -650,9 +767,44 @@ async def _check_expect(
         return _fail(case, "transfer_target")
     if await _booking_mismatch(events, adapter):
         return _fail(case, "booking_confirmed")
+    if occupied_start is not None:
+        confirmed = [event for event in events if event.kind == "booking_confirmed"]
+        slot_start = confirmed[0].payload.get("slot_start") if confirmed else None
+        if slot_start is None or slot_start == occupied_start:
+            return _fail(case, "occupied_slot")
+    missed = _history_gap(state, case.history)
+    if missed is not None:
+        return _fail(case, missed)
+    extra = _history_unexpected(state, case.history_absent)
+    if extra is not None:
+        return _fail(case, extra)
     if any(_TEXT_PROMISE.search(text) for text in texts):
         return _fail(case, "text_promise")
     return None
+
+
+def _history_gap(state: CallState, expect: Sequence[HistoryExpect]) -> str | None:
+    lines = [line for line in state.transcript if isinstance(line, AgentLine)]
+    for rule in expect:
+        if not any(_history_match(line, rule) for line in lines):
+            return "history_marker"
+    return None
+
+
+def _history_unexpected(state: CallState, expect: Sequence[HistoryExpect]) -> str | None:
+    lines = [line for line in state.transcript if isinstance(line, AgentLine)]
+    for rule in expect:
+        if any(_history_match(line, rule) for line in lines):
+            return "history_absent"
+    return None
+
+
+def _history_match(line: AgentLine, rule: HistoryExpect) -> bool:
+    if line.history != "marker" or line.marker != rule.marker:
+        return False
+    if rule.label is not None and line.label != rule.label:
+        return False
+    return True
 
 
 def _spoken_subsequence(texts: Sequence[str], expect: Sequence[SpokenExpect]) -> bool:
@@ -678,12 +830,30 @@ def _clinical_leak(case: EvalCase, events: Sequence[Event], state: CallState) ->
     rendered = [str(value) for event in events for value in event.payload.values()]
     blob = "\n".join(rendered)
     for utterance in case.utterances:
+        if not _is_clinical_utterance(utterance):
+            continue
         if utterance in blob:
             return True
         for line in state.transcript:
             if isinstance(line, CallerLine) and utterance in line.text:
                 return True
     return False
+
+
+@cache
+def _clinical_patterns() -> tuple[re.Pattern[str], ...]:
+    found: list[re.Pattern[str]] = []
+    for filename in ("universal.yaml", "medspa.yaml"):
+        pack = load_input_pack(PACKS_DIR / filename)
+        for trip in pack.tripwires:
+            if trip.clinical_class:
+                found.extend(pattern.regex for pattern in trip.patterns)
+    return tuple(found)
+
+
+def _is_clinical_utterance(text: str) -> bool:
+    folded = normalize_utterance(text)
+    return any(pattern.search(folded) for pattern in _clinical_patterns())
 
 
 def _bad_transfer(

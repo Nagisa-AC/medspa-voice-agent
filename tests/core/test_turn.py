@@ -275,6 +275,26 @@ async def test_quote_price_say_direct_before_follow_up() -> None:
     assert "tool_result" in await kinds(log)
 
 
+async def test_unquotable_quote_is_included_not_price_marker() -> None:
+    model = _scripted(
+        _tool("q", "quote_price", {"service_text": "weight loss"}),
+        _text("follow", "I can look at consult times."),
+    )
+    loop, state, _log, _store = await setup(model=model)
+    await collect(loop.handle_caller_turn(state, "how much is weight loss"))
+    quote_lines = [
+        line for line in state.transcript if isinstance(line, AgentLine) and "consult" in line.text
+    ]
+    assert quote_lines
+    assert all(line.history == "include" and line.marker is None for line in quote_lines)
+    assert not any(
+        isinstance(line, AgentLine) and line.marker == "price" for line in state.transcript
+    )
+    built = build(GLOW, state)
+    history = "\n".join(m.content for m in built.messages if m.role != "system")
+    assert "[price quoted" not in history
+
+
 async def test_in_turn_recall_is_user_assistant_tool_without_marker() -> None:
     inner = _scripted(
         CannedTurn(
