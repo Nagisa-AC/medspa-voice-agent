@@ -26,11 +26,40 @@ class CallerLine:
     at: datetime
 
 
+HistoryKind = Literal["include", "omit", "marker"]
+MarkerKind = Literal["price", "faq"]
+
+
 @dataclass(frozen=True)
 class AgentLine:
+    """One spoken agent line. Task 19 tags `history` at write time; the prompt builder reads it.
+
+    A model sentence blocked by the guardrail is never appended; only its replacement is.
+    """
+
     text: str
     origin: Literal["backend", "model"]
     at: datetime
+    history: HistoryKind = "include"
+    marker: MarkerKind | None = None
+    label: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.history not in ("include", "omit", "marker"):
+            raise ValueError("history must be include, omit, or marker")
+        if self.history == "marker":
+            if self.marker not in ("price", "faq"):
+                raise ValueError("history='marker' requires marker='price' or marker='faq'")
+            if self.marker == "price":
+                if self.label is None or not self.label.strip():
+                    raise ValueError("marker='price' requires a non-empty label")
+            elif self.label is not None:
+                raise ValueError("marker='faq' forbids label")
+            return
+        if self.marker is not None:
+            raise ValueError(f"history={self.history!r} forbids marker")
+        if self.label is not None:
+            raise ValueError(f"history={self.history!r} forbids label")
 
 
 @dataclass(frozen=True)
