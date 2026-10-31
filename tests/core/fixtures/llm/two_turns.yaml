@@ -1,0 +1,10 @@
+turns:
+  - id: first_turn
+    delay_s: 10
+    events:
+      - {type: text, text: "first"}
+      - {type: done}
+  - id: second_turn
+    events:
+      - {type: text, text: "second"}
+      - {type: done}

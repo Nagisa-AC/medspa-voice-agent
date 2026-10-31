@@ -1,0 +1,11 @@
+turns:
+  - id: invent_price
+    expect:
+      message_count: 2
+      roles: [system, user]
+      tool_names: [quote_price]
+      messages_must_not_contain:
+        - "I'm pregnant"
+    events:
+      - {type: text, text: "So that'll be about $450 total."}
+      - {type: done, stop: stop}
