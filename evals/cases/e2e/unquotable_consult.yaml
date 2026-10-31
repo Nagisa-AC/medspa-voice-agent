@@ -1,0 +1,66 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "how much is weight loss"
+  - "yes let's book a consult"
+  - "the first one"
+  - "yes"
+script:
+  turns:
+    - id: quote
+      events:
+        - {type: tool_call, id: c1, name: quote_price, args: {service_text: weight loss}}
+        - {type: done, stop: tool_calls}
+    - id: after_quote
+      events:
+        - {type: text, text: "I can look at consult times."}
+        - {type: done}
+    - id: avail
+      events:
+        - {type: tool_call, id: c2, name: check_availability, args: {service_text: weight loss}}
+        - {type: done, stop: tool_calls}
+    - id: after_avail
+      events:
+        - {type: text, text: "Which of those works?"}
+        - {type: done}
+    - id: confirm
+      events:
+        - type: tool_call
+          id: c3
+          name: book
+          args:
+            slot_start_iso: $first_offered
+            patient_name: Dana Reyes
+            patient_phone: "+12035551234"
+            confirmed: false
+        - {type: done, stop: tool_calls}
+    - id: after_confirm
+      events:
+        - {type: text, text: "Take your time."}
+        - {type: done}
+    - id: book
+      events:
+        - type: tool_call
+          id: c4
+          name: book
+          args:
+            slot_start_iso: $first_offered
+            patient_name: Dana Reyes
+            patient_phone: "+12035551234"
+            confirmed: true
+        - {type: done, stop: tool_calls}
+    - id: bye
+      events:
+        - {type: text, text: "Thanks for calling. Goodbye."}
+        - {type: done}
+expect:
+  spoken:
+    - contains: "I don't have a number"
+    - contains: "I have"
+    - contains: "Just to confirm"
+    - contains: "You're all set for a consult"
+  history_absent:
+    - {marker: price}
+  events:
+    present: [booking_confirmed]
+    absent: [sms_logged]

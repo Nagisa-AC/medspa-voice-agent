@@ -1,0 +1,29 @@
+tenant: glow
+clock: "2026-11-03T11:00:00-05:00"
+utterances:
+  - "what times do you have for lip filler"
+  - "I'm pregnant"
+script:
+  turns:
+    - id: avail
+      events:
+        - {type: tool_call, id: c1, name: check_availability, args: {service_text: lip filler}}
+        - {type: done, stop: tool_calls}
+    - id: after_avail
+      events:
+        - {type: text, text: "Which of those works?"}
+        - {type: done}
+    - id: unused
+      events:
+        - {type: text, text: "nope"}
+        - {type: done}
+expect:
+  spoken:
+    - contains: "I have"
+    - contains: "connect you"
+  committed:
+    trip: clinical_question
+    path: transfer
+  events:
+    present: [sms_logged]
+    absent: [booking_attempted, booking_confirmed]

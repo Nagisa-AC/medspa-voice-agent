@@ -68,6 +68,18 @@ def test_loader_rejects_naive_clock(tmp_path: Path) -> None:
         load_case_path(path)
 
 
+def test_loader_rejects_naive_clock_at(tmp_path: Path) -> None:
+    path = tmp_path / "naive_at.yaml"
+    path.write_text(
+        "tenant: glow\nclock: '2026-11-03T11:00:00-05:00'\n"
+        "clock_at: {1: '2026-11-03T11:07:00'}\n"
+        "utterances: ['hi']\nscript_path: scripts/unused.yaml\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CaseLoadError, match="timezone-aware"):
+        load_case_path(path)
+
+
 def test_loader_rejects_unknown_tenant(tmp_path: Path) -> None:
     path = tmp_path / "tenant.yaml"
     path.write_text(
@@ -139,6 +151,27 @@ def test_sentence_tables_expand_ids() -> None:
     assert price[0].never_spoken
     assert [case.id for case in clinical] == [f"sentences_{i}" for i in range(len(clinical))]
     assert len(clinical) >= 30
+
+
+def test_e2e_category_has_nine_cases() -> None:
+    cases = [case for case in load_cases() if case.category == "e2e"]
+    assert {case.id for case in cases} == {
+        "full_booking",
+        "slot_taken_then_other",
+        "clinical_mid_booking",
+        "identity_mid_call",
+        "unquotable_consult",
+        "invent_after_quote",
+        "callback_sunday_new_number",
+        "two_soft_with_gap",
+        "duration_mid_booking",
+    }
+    duration = next(case for case in cases if case.id == "duration_mid_booking")
+    assert duration.clock_at
+    taken = next(case for case in cases if case.id == "slot_taken_then_other")
+    assert taken.hooks.occupy_first
+    consult = next(case for case in cases if case.id == "unquotable_consult")
+    assert consult.history_absent
 
 
 def test_price_invention_meets_floor() -> None:
