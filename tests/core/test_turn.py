@@ -305,9 +305,7 @@ async def test_in_turn_recall_is_user_assistant_tool_without_marker() -> None:
     assert "[price quoted" not in tool.content
     joined = "\n".join(message.content for message in recall)
     assert "[price quoted for Dermal Filler]" not in joined
-    next_history = "\n".join(
-        m.content for m in build(GLOW, state).messages if m.role != "system"
-    )
+    next_history = "\n".join(m.content for m in build(GLOW, state).messages if m.role != "system")
     assert "[price quoted for Dermal Filler]" in next_history
 
 
