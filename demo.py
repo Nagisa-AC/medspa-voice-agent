@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import secrets
 import sys
 import time
@@ -31,6 +32,22 @@ NY = ZoneInfo("America/New_York")
 SUNDAY = datetime(2026, 11, 8, 14, 0, tzinfo=NY)
 SYNTHETIC_CALLER = "+12035551234"
 BANNER = "Synthetic data only. Do not type real patient information. Type quit or exit to leave."
+_ENV_KEYS = frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_EFFORT"})
+
+
+def load_dotenv(path: Path) -> None:
+    """Load known demo keys from a local file. Does not override existing env."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        if name not in _ENV_KEYS or name in os.environ:
+            continue
+        os.environ[name] = value.strip().strip("'").strip('"')
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -168,6 +185,7 @@ def _stdin_line() -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    load_dotenv(ROOT / ".env")
     try:
         return asyncio.run(run(args))
     except ValueError as exc:

@@ -14,4 +14,5 @@ __pycache__/
 # Local secrets and event logs (may hold encrypted caller data)
 .env
 .env.*
+!.env.example
 *.jsonl

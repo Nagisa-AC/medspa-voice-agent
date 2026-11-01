@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import ast
+import os
 from datetime import timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from demo import SYNTHETIC_CALLER, make_clock, parse_args
+import pytest
+
+from demo import SYNTHETIC_CALLER, load_dotenv, make_clock, parse_args
 
 
 def test_flags_and_synthetic_caller() -> None:
@@ -28,6 +31,29 @@ def test_sunday_clock_advances_from_fixed_instant() -> None:
     second = clock()
     assert second - first == timedelta(seconds=2.5)
     assert first.weekday() == 6
+
+
+def test_dotenv_loads_known_keys_without_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_MODEL", "already-set")
+    path = tmp_path / ".env"
+    path.write_text(
+        "ANTHROPIC_API_KEY=sk-test-not-a-real-key\nANTHROPIC_MODEL=should-not-win\nUNKNOWN=nope\n",
+        encoding="utf-8",
+    )
+    load_dotenv(path)
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-not-a-real-key"
+    assert os.environ["ANTHROPIC_MODEL"] == "already-set"
+    assert "UNKNOWN" not in os.environ
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+
+def test_env_example_has_no_secret() -> None:
+    text = Path(".env.example").read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY=" in text
+    assert "sk-" not in text
 
 
 def test_demo_does_not_import_retell() -> None:
