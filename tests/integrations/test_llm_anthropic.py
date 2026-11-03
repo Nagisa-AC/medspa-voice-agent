@@ -4,6 +4,7 @@ import ast
 import asyncio
 import os
 from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,7 +22,9 @@ from core.llm import (
     ToolCallParseError,
     ToolSchema,
 )
-from core.prompt import tool_result_messages
+from core.prompt import build, tool_result_messages
+from core.state import AgentLine, CallerLine, ToolExchange, new_call_state
+from core.tenant import load_tenant_file
 from integrations.llm_anthropic import (
     CALL_STARTED,
     AnthropicLLM,
@@ -250,6 +253,58 @@ def test_translate_system_tools_and_call_started() -> None:
     assert isinstance(results, list)
     assert results[0]["type"] == "tool_result"
     assert results[0]["tool_use_id"] == "c1"
+
+
+def test_text_then_tool_exchange_folds_into_one_assistant() -> None:
+    glow = load_tenant_file(
+        Path(__file__).resolve().parents[2] / "tenants" / "glow_aesthetics.yaml",
+        today=date(2026, 10, 29),
+    )
+    now = datetime(2026, 11, 3, 16, 0, tzinfo=UTC)
+    state = new_call_state(
+        tenant=glow,
+        call_id="call_1",
+        data_key_id="key_1",
+        now=now,
+        extract=lambda _text: (),
+    )
+    say = "I have Thursday the 5th at 10:00 AM."
+    state.transcript.extend(
+        [
+            CallerLine("what times Thursday", now),
+            AgentLine("Let me check.", "model", now),
+            ToolExchange(
+                "c2",
+                "check_availability",
+                {"service_text": "lip filler"},
+                {"found": True, "already_spoken": True, "slots": ()},
+                now,
+            ),
+            AgentLine(say, "backend", now),
+            CallerLine("the first one", now),
+        ]
+    )
+    _, api = to_api_messages(build(glow, state, now=now).messages)
+    roles = [row["role"] for row in api]
+    assert roles == ["user", "assistant", "user", "assistant", "user"]
+    assert all(roles[i] != roles[i + 1] for i in range(len(roles) - 1))
+    blocks = api[1]["content"]
+    assert isinstance(blocks, list)
+    assert blocks[0] == {"type": "text", "text": "Let me check."}
+    assert blocks[1] == {
+        "type": "tool_use",
+        "id": "c2",
+        "name": "check_availability",
+        "input": {"service_text": "lip filler"},
+    }
+    results = api[2]["content"]
+    assert isinstance(results, list)
+    assert results[0]["type"] == "tool_result"
+    assert results[0]["tool_use_id"] == "c2"
+    spoken = api[3]["content"]
+    assert isinstance(spoken, list)
+    assert spoken == [{"type": "text", "text": say}]
+    assert api[4] == {"role": "user", "content": "the first one"}
 
 
 def test_missing_key_and_repr_hide_secrets(monkeypatch: pytest.MonkeyPatch) -> None:

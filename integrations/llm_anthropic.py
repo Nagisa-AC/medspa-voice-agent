@@ -130,6 +130,8 @@ def to_api_messages(
             and _text_only(api[-1])
         ):
             _merge_assistant_text(api[-1], message.content)
+        elif message.tool_calls and api and api[-1]["role"] == "assistant" and _text_only(api[-1]):
+            _fold_tool_use(api[-1], blocks)
         elif blocks:
             api.append({"role": "assistant", "content": blocks})
         elif results:
@@ -182,6 +184,17 @@ def _merge_assistant_text(row: dict[str, object], text: str) -> None:
     ]
     texts.append(text)
     row["content"] = [{"type": "text", "text": "\n".join(texts)}]
+
+
+def _fold_tool_use(row: dict[str, object], blocks: list[dict[str, object]]) -> None:
+    content = row["content"]
+    if isinstance(content, str):
+        prefix: list[dict[str, object]] = [{"type": "text", "text": content}] if content else []
+    elif isinstance(content, list):
+        prefix = [block for block in content if isinstance(block, dict)]
+    else:
+        prefix = []
+    row["content"] = prefix + blocks
 
 
 def _event_type(event: object) -> str:

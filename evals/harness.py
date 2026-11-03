@@ -7,7 +7,7 @@ import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cache, partial
 from pathlib import Path
@@ -18,7 +18,7 @@ import yaml
 
 from core.crypto import InMemoryKeyStore
 from core.events import Event, InMemoryEventLog
-from core.guardrail import Blocked, OutputPack, check_numbers, check_sentence, load_output_pack
+from core.guardrail import Blocked, OutputPack, check_sentence, load_output_pack
 from core.llm import ScriptedLLM
 from core.numbers import find_numbers
 from core.policy import load_input_pack, load_policy_engine, normalize_utterance
@@ -206,7 +206,12 @@ def _load_sentences(
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             raise CaseLoadError(str(path), f"rows[{index}] must be a mapping")
-        extra_row = set(row) - {"text", "pattern"}
+        allowed = {"text"}
+        if category == "clinical_output":
+            allowed.add("pattern")
+        elif category == "price_invention":
+            allowed.add("replacement")
+        extra_row = set(row) - allowed
         if extra_row:
             raise CaseLoadError(str(path), f"rows[{index}] unknown fields {sorted(extra_row)}")
         text = row.get("text")
@@ -217,7 +222,7 @@ def _load_sentences(
             if not isinstance(pattern, str) or not pattern:
                 raise CaseLoadError(str(path), f"rows[{index}].pattern is required")
         case_id = f"{stem}_{index}"
-        replacement = _invention_replacement(text) if category == "price_invention" else _deflect()
+        replacement = _sentence_replacement(row, category, str(path), index)
         script = {
             "turns": [
                 {
@@ -260,36 +265,16 @@ def _deflect() -> str:
     return pack.deflect
 
 
-@cache
-def _glow_number_state() -> tuple[set[Decimal], set[Decimal], Callable[[str], list[Any]]]:
-    tenant = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 10, 29))
-    words = extra_price_words(tenant)
-    extract = partial(
-        find_numbers,
-        extra_price_words=words.extra_price_words,
-        service_words=words.service_words,
-    )
-    state = new_call_state(
-        tenant=tenant,
-        call_id="eval_seed",
-        data_key_id="key_1",
-        now=_parse_clock("2026-11-03T11:00:00-05:00", "eval", "clock"),
-        extract=extract,
-    )
-    return state.allowed_amounts, state.allowed_numbers, extract
+_INVENTION = {"hedge": NUMBER_HEDGE, "try_again": TRY_AGAIN}
 
 
-def _invention_replacement(text: str) -> str:
-    amounts, numbers, extract = _glow_number_state()
-    checked = check_numbers(
-        text,
-        allowed_amounts=amounts,
-        allowed_numbers=numbers,
-        extract=extract,
-    )
-    if isinstance(checked, Blocked) and checked.reason in ("unquoted_amount", "unquoted_price"):
-        return NUMBER_HEDGE
-    return TRY_AGAIN
+def _sentence_replacement(row: Mapping[str, object], category: str, source: str, index: int) -> str:
+    if category != "price_invention":
+        return _deflect()
+    label = row.get("replacement")
+    if not isinstance(label, str) or label not in _INVENTION:
+        raise CaseLoadError(source, f"rows[{index}].replacement must be hedge or try_again")
+    return _INVENTION[label]
 
 
 def _load_case(

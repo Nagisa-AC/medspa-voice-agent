@@ -7,7 +7,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Literal, Protocol
+from types import MappingProxyType
+from typing import Any, Literal, Protocol
 
 from core.tenant import Tenant
 
@@ -77,8 +78,19 @@ class ToolExchange:
             raise ValueError("call_id must not be empty")
         if not self.name:
             raise ValueError("name must not be empty")
-        object.__setattr__(self, "args", _freeze_mapping(self.args))
-        object.__setattr__(self, "payload", _freeze_mapping(self.payload))
+        object.__setattr__(self, "args", MappingProxyType(_freeze_mapping(self.args)))
+        object.__setattr__(self, "payload", MappingProxyType(_freeze_mapping(self.payload)))
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> ToolExchange:
+        cloned = ToolExchange(
+            call_id=self.call_id,
+            name=self.name,
+            args=copy.deepcopy(dict(self.args), memo),
+            payload=copy.deepcopy(dict(self.payload), memo),
+            at=copy.deepcopy(self.at, memo),
+        )
+        memo[id(self)] = cloned
+        return cloned
 
 
 def _freeze_mapping(value: Mapping[str, object]) -> dict[str, object]:

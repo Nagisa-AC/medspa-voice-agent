@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -27,6 +28,7 @@ from core.state import (
     NumberKind,
     OfferedSlot,
     StaleStateError,
+    ToolExchange,
     Transfer,
     UnknownCallError,
     admit_numbers,
@@ -452,8 +454,48 @@ def test_state_module_imports_no_decision_code() -> None:
         "dataclasses",
         "datetime",
         "decimal",
+        "types",
         "typing",
     }
+
+
+def test_tool_exchange_args_and_payload_are_mapping_proxies() -> None:
+    row = ToolExchange(
+        "c1",
+        "quote_price",
+        {"service_text": "filler"},
+        {"found": True, "already_spoken": True},
+        NOW,
+    )
+    assert isinstance(row.args, MappingProxyType)
+    assert isinstance(row.payload, MappingProxyType)
+    assert row.args == {"service_text": "filler"}
+    assert row.payload["found"] is True
+    with pytest.raises(TypeError):
+        row.args["service_text"] = "tox"  # type: ignore[index]
+
+
+async def test_store_round_trips_tool_exchange() -> None:
+    store = InMemorySessionStore()
+    s = state()
+    s.transcript.append(
+        ToolExchange(
+            "c1",
+            "check_availability",
+            {"service_text": "botox"},
+            {"found": True, "slots": ()},
+            NOW,
+        )
+    )
+    await store.create(s)
+    loaded = await store.get("call_1")
+    assert loaded is not None
+    assert loaded.transcript == s.transcript
+    assert loaded.transcript[0] is not s.transcript[0]
+    line = loaded.transcript[0]
+    assert isinstance(line, ToolExchange)
+    assert isinstance(line.args, MappingProxyType)
+    assert isinstance(line.payload, MappingProxyType)
 
 
 def test_agent_lines_keep_origin() -> None:
