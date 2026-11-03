@@ -3,6 +3,7 @@ name = "medspa-voice-agent"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "anthropic>=2.3.0,<3",
     "cryptography>=50.0.2,<51",
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3,<7",
@@ -31,7 +32,7 @@ select = ["E", "W", "F", "I", "B", "UP", "DTZ", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["core", "tools", "integrations", "evals", "tests"]
+files = ["core", "tools", "integrations", "evals", "tests", "demo.py"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
