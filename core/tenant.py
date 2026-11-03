@@ -7,12 +7,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from functools import cache
 from itertools import pairwise
 from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, Self
-from zoneinfo import ZoneInfo, available_timezones
+from zoneinfo import ZoneInfo
 
 import yaml
 from pydantic import (
@@ -238,6 +237,19 @@ class Integration(_Model):
     location_id: Text
 
 
+TIMEZONE_WORDS: Mapping[str, str] = MappingProxyType(
+    {
+        "America/New_York": "Eastern",
+        "America/Chicago": "Central",
+        "America/Denver": "Mountain",
+        "America/Phoenix": "Mountain",
+        "America/Los_Angeles": "Pacific",
+        "America/Anchorage": "Alaska",
+        "Pacific/Honolulu": "Hawaii",
+    }
+)
+
+
 class Tenant(_Model):
     id: Slug
     name: Text
@@ -264,6 +276,10 @@ class Tenant(_Model):
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
 
+    @property
+    def timezone_word(self) -> str:
+        return TIMEZONE_WORDS[self.timezone]
+
     @field_validator("facts", "policies")
     @classmethod
     def _read_only(cls, value: Mapping[str, str]) -> Mapping[str, str]:
@@ -272,7 +288,7 @@ class Tenant(_Model):
     @field_validator("timezone")
     @classmethod
     def _check_timezone(cls, value: str) -> str:
-        if "/" not in value or value.startswith("Etc/") or value not in _zones():
+        if value not in TIMEZONE_WORDS:
             raise ValueError("must be a region-style IANA timezone like America/New_York")
         return value
 
@@ -286,11 +302,6 @@ class Tenant(_Model):
         if issues:
             raise TenantRulesError(issues)
         return self
-
-
-@cache
-def _zones() -> frozenset[str]:
-    return frozenset(available_timezones())
 
 
 def normalize_phrase(text: str) -> str:

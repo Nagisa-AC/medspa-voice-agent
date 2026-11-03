@@ -639,6 +639,41 @@ def _try_ordinal(tokens: list[Token], i: int) -> tuple[list[_Hit], int] | None:
 # --------------------------------------------------------------------------- phones, ranges, digits
 
 
+def caller_phone_plains(text: str) -> tuple[Decimal, ...]:
+    """NANP 10/11-digit phones as plains. Never amounts. Used on caller text only."""
+    tokens = tokenize(text)
+    values: list[Decimal] = []
+    i = 0
+    while i < len(tokens):
+        matched = _try_phone(tokens, i)
+        if matched is None:
+            i += 1
+            continue
+        hits, nxt = matched
+        digits = _digit_str(hits[0].value)
+        if _is_nanp_10_or_11(digits):
+            values.extend(hit.value for hit in hits)
+        i = nxt
+    return tuple(values)
+
+
+def _digit_str(value: Decimal) -> str:
+    as_int = _as_int(value)
+    if as_int is None:
+        return ""
+    return str(abs(as_int))
+
+
+def _is_nanp_10_or_11(digits: str) -> bool:
+    if len(digits) == 10:
+        national = digits
+    elif len(digits) == 11 and digits.startswith("1"):
+        national = digits[1:]
+    else:
+        return False
+    return national[0] not in "01"
+
+
 def _try_phone(tokens: list[Token], i: int) -> tuple[list[_Hit], int] | None:
     j = i
     if tokens[j].kind == "punct" and tokens[j].norm == "+":

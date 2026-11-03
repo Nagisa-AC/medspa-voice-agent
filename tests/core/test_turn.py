@@ -4,6 +4,7 @@ import ast
 import json
 from collections.abc import AsyncIterator, Sequence
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ from core.llm import (
 from core.numbers import find_numbers
 from core.policy import load_policy_engine
 from core.prompt import build
-from core.state import AgentLine, InMemorySessionStore, new_call_state
+from core.state import AgentLine, InMemorySessionStore, ToolExchange, new_call_state
 from core.tenant import extra_price_words, load_tenant_file
 from core.turn import (
     ASK_BEST,
@@ -37,6 +38,7 @@ from core.turn import (
     GOODBYE,
     HEDGE,
     NUMBER_HEDGE,
+    TRY_AGAIN,
     OutputChunk,
     TurnLoop,
 )
@@ -222,10 +224,48 @@ async def test_invented_price_is_replaced_and_dropped() -> None:
     events = await log.read("call_1")
     blocked = [event for event in events if event.kind == "guardrail_blocked"]
     assert blocked[0].payload["check"] == "numbers"
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=TUE)
     joined = "\n".join(m.content for m in built.messages if m.role != "system")
     assert "$450" not in joined
     assert "450" not in joined
+
+
+async def test_unknown_plain_uses_try_again() -> None:
+    loop, state, _log, _store = await setup(
+        model=_scripted(_text("n", "We have 47 openings tomorrow."))
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "when can I come in"))
+    spoken = [chunk.text for chunk in chunks]
+    assert TRY_AGAIN in spoken
+    assert NUMBER_HEDGE not in spoken
+    assert "47 openings" not in spoken
+
+
+async def test_caller_nanp_readback_passes() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("p", "I'll use 203-555-1234.")))
+    chunks = await collect(loop.handle_caller_turn(state, "203-555-1234"))
+    spoken = [chunk.text for chunk in chunks]
+    assert "I'll use 203-555-1234." in spoken
+    assert NUMBER_HEDGE not in spoken
+    assert TRY_AGAIN not in spoken
+
+
+async def test_caller_dollar_amount_still_blocks_model_price() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("p", "It's $400.")))
+    before = set(state.allowed_amounts)
+    chunks = await collect(loop.handle_caller_turn(state, "is it $400?"))
+    spoken = [chunk.text for chunk in chunks]
+    assert NUMBER_HEDGE in spoken
+    assert "It's $400." not in spoken
+    assert Decimal(400) not in state.allowed_amounts
+    assert state.allowed_amounts == before
+
+
+async def test_compact_phone_does_not_admit_amount() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("p", "It's $400.")))
+    await collect(loop.handle_caller_turn(state, "my number is +12035551234, is it $400?"))
+    assert Decimal("12035551234") in state.allowed_numbers
+    assert Decimal(400) not in state.allowed_amounts
 
 
 async def test_clinical_model_sentence_never_enters_history() -> None:
@@ -267,7 +307,7 @@ async def test_quote_price_say_direct_before_follow_up() -> None:
         and line.label == "Dermal Filler"
         for line in state.transcript
     )
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=TUE)
     history = "\n".join(m.content for m in built.messages if m.role != "system")
     assert "[price quoted for Dermal Filler]" in history
     assert "$700" not in history
@@ -290,7 +330,7 @@ async def test_unquotable_quote_is_included_not_price_marker() -> None:
     assert not any(
         isinstance(line, AgentLine) and line.marker == "price" for line in state.transcript
     )
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=TUE)
     history = "\n".join(m.content for m in built.messages if m.role != "system")
     assert "[price quoted" not in history
 
@@ -325,7 +365,9 @@ async def test_in_turn_recall_is_user_assistant_tool_without_marker() -> None:
     assert "[price quoted" not in tool.content
     joined = "\n".join(message.content for message in recall)
     assert "[price quoted for Dermal Filler]" not in joined
-    next_history = "\n".join(m.content for m in build(GLOW, state).messages if m.role != "system")
+    next_history = "\n".join(
+        m.content for m in build(GLOW, state, now=TUE).messages if m.role != "system"
+    )
     assert "[price quoted for Dermal Filler]" in next_history
 
 
@@ -336,7 +378,7 @@ async def test_lookup_faq_hit_is_marker_and_logged() -> None:
     )
     loop, state, log, _store = await setup(model=model)
     await collect(loop.handle_caller_turn(state, "how long does botox last"))
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=TUE)
     history = "\n".join(m.content for m in built.messages if m.role != "system")
     assert TOX_SAY not in history
     assert "[answered from the spa's FAQ]" in history
@@ -362,9 +404,39 @@ async def test_check_availability_say_is_included() -> None:
         and line.text.startswith("I have ")
         for line in state.transcript
     )
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=TUE)
     history = "\n".join(m.content for m in built.messages if m.role != "system")
     assert "I have " in history
+
+
+async def test_availability_tool_pair_precedes_say_on_next_turn() -> None:
+    model = _scripted(
+        _tool("a", "check_availability", {"service_text": "botox"}, call_id="c2"),
+        _text("follow", "Which of those works?"),
+        _text("next", "Happy to help."),
+    )
+    loop, state, _log, _store = await setup(model=model)
+    await collect(loop.handle_caller_turn(state, "when can I come in for botox"))
+    await collect(loop.handle_caller_turn(state, "the first one"))
+    assert any(
+        isinstance(line, ToolExchange) and line.name == "check_availability"
+        for line in state.transcript
+    )
+    built = build(GLOW, state, now=TUE)
+    messages = [message for message in built.messages if message.role != "system"]
+    names = [call.name for message in messages for call in message.tool_calls]
+    assert "check_availability" in names
+    pair_at = next(
+        i
+        for i, message in enumerate(messages)
+        if message.role == "assistant"
+        and any(call.name == "check_availability" for call in message.tool_calls)
+    )
+    assert messages[pair_at + 1].role == "tool"
+    avail_at = next(i for i, message in enumerate(messages) if "I have " in message.content)
+    assert pair_at < avail_at
+    joined = "\n".join(message.content for message in messages)
+    assert "[price quoted" not in joined
 
 
 async def test_book_say_is_omitted_and_logged() -> None:
@@ -405,7 +477,7 @@ async def test_book_say_is_omitted_and_logged() -> None:
         and line.text.startswith("You're all set")
         for line in state.transcript
     )
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=TUE)
     history = "\n".join(m.content for m in built.messages if m.role != "system")
     assert "You're all set" not in history
     assert "$" not in history

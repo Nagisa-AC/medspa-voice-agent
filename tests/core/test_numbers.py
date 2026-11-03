@@ -9,7 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 import core.numbers
-from core.numbers import Found, find_numbers, integer_to_words
+from core.numbers import Found, caller_phone_plains, find_numbers, integer_to_words
 from core.state import NumberExtractor, new_call_state
 from core.tenant import load_tenant_file
 
@@ -166,6 +166,23 @@ def test_phone_plus_one() -> None:
 
 def test_compact_phone_is_one_number() -> None:
     assert pairs("+12035550100") == [(D("12035550100"), "plain")]
+
+
+def test_caller_phone_plains_hyphenated_nanp() -> None:
+    assert set(caller_phone_plains("203-555-1234")) == {
+        D("2035551234"),
+        D(203),
+        D(555),
+        D(1234),
+    }
+
+
+def test_caller_phone_plains_ignores_amount() -> None:
+    assert caller_phone_plains("is it $400?") == ()
+
+
+def test_caller_phone_plains_skips_seven_digit() -> None:
+    assert caller_phone_plains("555-1234") == ()
 
 
 def test_tenant_price_unit_phrase() -> None:

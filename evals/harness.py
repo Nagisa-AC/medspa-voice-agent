@@ -7,7 +7,7 @@ import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from functools import cache, partial
 from pathlib import Path
@@ -18,7 +18,7 @@ import yaml
 
 from core.crypto import InMemoryKeyStore
 from core.events import Event, InMemoryEventLog
-from core.guardrail import Blocked, OutputPack, check_sentence, load_output_pack
+from core.guardrail import Blocked, OutputPack, check_numbers, check_sentence, load_output_pack
 from core.llm import ScriptedLLM
 from core.numbers import find_numbers
 from core.policy import load_input_pack, load_policy_engine, normalize_utterance
@@ -33,7 +33,7 @@ from core.state import (
     new_call_state,
 )
 from core.tenant import extra_price_words, load_tenant_file
-from core.turn import NUMBER_HEDGE, OutputChunk, TurnLoop
+from core.turn import NUMBER_HEDGE, TRY_AGAIN, OutputChunk, TurnLoop
 from integrations.booking import MockBookingAdapter, Patient, Slot, SlotTaken, Unavailable
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -217,7 +217,7 @@ def _load_sentences(
             if not isinstance(pattern, str) or not pattern:
                 raise CaseLoadError(str(path), f"rows[{index}].pattern is required")
         case_id = f"{stem}_{index}"
-        replacement = NUMBER_HEDGE if category == "price_invention" else _deflect()
+        replacement = _invention_replacement(text) if category == "price_invention" else _deflect()
         script = {
             "turns": [
                 {
@@ -258,6 +258,38 @@ def _load_sentences(
 def _deflect() -> str:
     pack = load_output_pack(PACKS_DIR / "medspa.output.yaml")
     return pack.deflect
+
+
+@cache
+def _glow_number_state() -> tuple[set[Decimal], set[Decimal], Callable[[str], list[Any]]]:
+    tenant = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 10, 29))
+    words = extra_price_words(tenant)
+    extract = partial(
+        find_numbers,
+        extra_price_words=words.extra_price_words,
+        service_words=words.service_words,
+    )
+    state = new_call_state(
+        tenant=tenant,
+        call_id="eval_seed",
+        data_key_id="key_1",
+        now=_parse_clock("2026-11-03T11:00:00-05:00", "eval", "clock"),
+        extract=extract,
+    )
+    return state.allowed_amounts, state.allowed_numbers, extract
+
+
+def _invention_replacement(text: str) -> str:
+    amounts, numbers, extract = _glow_number_state()
+    checked = check_numbers(
+        text,
+        allowed_amounts=amounts,
+        allowed_numbers=numbers,
+        extract=extract,
+    )
+    if isinstance(checked, Blocked) and checked.reason in ("unquoted_amount", "unquoted_price"):
+        return NUMBER_HEDGE
+    return TRY_AGAIN
 
 
 def _load_case(

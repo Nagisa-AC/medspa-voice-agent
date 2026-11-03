@@ -143,6 +143,7 @@ BROKEN: list[tuple[str, Callable[[Data], None], str]] = [
     ),
     # Valid IANA timezone (region-style)
     ("timezone_unknown", set_(top, "timezone", "Mars/Base"), "timezone"),
+    ("timezone_europe_london", set_(top, "timezone", "Europe/London"), "timezone"),
     ("timezone_abbreviation", set_(top, "timezone", "EST"), "timezone"),
     ("timezone_utc", set_(top, "timezone", "UTC"), "timezone"),
     ("timezone_etc", set_(top, "timezone", "Etc/GMT+5"), "timezone"),
@@ -439,11 +440,25 @@ def test_registry_reports_every_broken_file(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- Glow
 
 
+def test_europe_london_fails_at_load() -> None:
+    data = base()
+    data["timezone"] = "Europe/London"
+    issues = issues_for(data)
+    assert any(issue.path == "timezone" for issue in issues)
+
+
+def test_chicago_timezone_word_is_central() -> None:
+    tenant = parse_tenant(base(), source="x", today=TODAY)
+    assert tenant.timezone == "America/Chicago"
+    assert tenant.timezone_word == "Central"
+
+
 def test_glow_loads() -> None:
     registry = TenantRegistry.load(ROOT / "tenants", today=TODAY)
     glow = registry.get("glow_aesthetics")
     assert glow is not None
     assert glow.tz.key == "America/New_York"
+    assert glow.timezone_word == "Eastern"
     tox = glow.services[0]
     assert (tox.price_min, tox.price_max) == (Decimal(13), Decimal(15))
     assert glow.services[2].quotable is False

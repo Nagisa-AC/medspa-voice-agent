@@ -153,7 +153,7 @@ def test_sentence_tables_expand_ids() -> None:
     assert len(clinical) >= 30
 
 
-def test_e2e_category_has_nine_cases() -> None:
+def test_e2e_category_ids() -> None:
     cases = [case for case in load_cases() if case.category == "e2e"]
     assert {case.id for case in cases} == {
         "full_booking",
@@ -165,6 +165,7 @@ def test_e2e_category_has_nine_cases() -> None:
         "callback_sunday_new_number",
         "two_soft_with_gap",
         "duration_mid_booking",
+        "live_demo_booking",
     }
     duration = next(case for case in cases if case.id == "duration_mid_booking")
     assert duration.clock_at

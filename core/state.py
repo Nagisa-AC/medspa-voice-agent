@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -60,6 +60,37 @@ class AgentLine:
             raise ValueError(f"history={self.history!r} forbids marker")
         if self.label is not None:
             raise ValueError(f"history={self.history!r} forbids label")
+
+
+@dataclass(frozen=True)
+class ToolExchange:
+    """One dispatched tool. Prompt builder replays args and the model payload, never `say`."""
+
+    call_id: str
+    name: str
+    args: Mapping[str, object]
+    payload: Mapping[str, object]
+    at: datetime
+
+    def __post_init__(self) -> None:
+        if not self.call_id:
+            raise ValueError("call_id must not be empty")
+        if not self.name:
+            raise ValueError("name must not be empty")
+        object.__setattr__(self, "args", _freeze_mapping(self.args))
+        object.__setattr__(self, "payload", _freeze_mapping(self.payload))
+
+
+def _freeze_mapping(value: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): _freeze_value(item) for key, item in value.items()}
+
+
+def _freeze_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value)
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_value(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -139,7 +170,7 @@ class CallState:
     tenant_id: str
     started_at: datetime
     data_key_id: str
-    transcript: list[CallerLine | AgentLine] = field(default_factory=list)
+    transcript: list[CallerLine | AgentLine | ToolExchange] = field(default_factory=list)
     allowed_amounts: set[Decimal] = field(default_factory=set)
     allowed_numbers: set[Decimal] = field(default_factory=set)
     offered_slots: list[OfferedSlot] = field(default_factory=list)
