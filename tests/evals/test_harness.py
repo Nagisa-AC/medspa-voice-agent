@@ -18,11 +18,12 @@ from core.numbers import find_numbers
 from core.policy import load_input_pack
 from core.state import CallerLine, CallState, Committed, Transfer
 from core.tenant import extra_price_words, load_tenant_file
-from core.turn import OutputChunk, TurnLoop
+from core.turn import NUMBER_HEDGE, TRY_AGAIN, OutputChunk, TurnLoop
 from evals.harness import (
     CaseFailure,
     CaseLoadError,
     Report,
+    SpokenExpect,
     _clinical_leak,
     check_model_order,
     format_report,
@@ -153,7 +154,7 @@ def test_sentence_tables_expand_ids() -> None:
     assert len(clinical) >= 30
 
 
-def test_e2e_category_has_nine_cases() -> None:
+def test_e2e_category_ids() -> None:
     cases = [case for case in load_cases() if case.category == "e2e"]
     assert {case.id for case in cases} == {
         "full_booking",
@@ -165,6 +166,7 @@ def test_e2e_category_has_nine_cases() -> None:
         "callback_sunday_new_number",
         "two_soft_with_gap",
         "duration_mid_booking",
+        "live_demo_booking",
     }
     duration = next(case for case in cases if case.id == "duration_mid_booking")
     assert duration.clock_at
@@ -181,6 +183,23 @@ def test_price_invention_meets_floor() -> None:
         )
     )
     assert len(raw["rows"]) >= 50
+    cases = [case for case in load_cases() if case.category == "price_invention"]
+    assert len(cases) == len(raw["rows"])
+    for row, case in zip(raw["rows"], cases, strict=True):
+        assert row["replacement"] in {"hedge", "try_again"}
+        expected = NUMBER_HEDGE if row["replacement"] == "hedge" else TRY_AGAIN
+        assert case.spoken == (SpokenExpect("contains", expected),)
+
+
+def test_price_invention_row_requires_labeled_replacement(tmp_path: Path) -> None:
+    path = tmp_path / "price_invention" / "sentences.yaml"
+    path.parent.mkdir()
+    path.write_text(
+        'rows:\n  - {text: "That\'s $450.", replacement: nope}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(CaseLoadError, match="replacement"):
+        load_case_path(path)
 
 
 async def test_planted_identity_passes() -> None:

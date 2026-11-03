@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 from string import Formatter
@@ -26,11 +27,34 @@ from types import MappingProxyType
 from typing import Final
 
 from core.llm import Message, ToolCall, ToolSchema
-from core.state import AgentLine, CallerLine, CallState
+from core.state import AgentLine, CallerLine, CallState, ToolExchange
 from core.tenant import Tenant
 
 TEMPLATE_PATH: Final = Path(__file__).resolve().parent.parent / "prompts" / "medspa.md"
-_REQUIRED = frozenset({"spa_name", "service_names", "facts", "policies"})
+_REQUIRED = frozenset({"spa_name", "service_names", "facts", "policies", "now"})
+_WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 _PRICE_MARKER = "[price quoted for {label}]"
 _FAQ_MARKER = "[answered from the spa's FAQ]"
 
@@ -166,12 +190,15 @@ def build(
     tenant: Tenant,
     state: CallState,
     *,
+    now: datetime,
     extra: Sequence[Message] = (),
     template: str | None = None,
     template_path: Path | None = None,
 ) -> BuiltPrompt:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
     text = template if template is not None else load_template(template_path or TEMPLATE_PATH)
-    system = _fill(text, tenant)
+    system = _fill(text, tenant, now)
     return BuiltPrompt(
         messages=(Message(role="system", content=system), *_history(state), *extra),
         tools=TOOLS,
@@ -192,6 +219,10 @@ def _history(state: CallState) -> tuple[Message, ...]:
         if isinstance(line, CallerLine):
             messages.append(Message(role="user", content=line.text))
             continue
+        if isinstance(line, ToolExchange):
+            call = ToolCall(id=line.call_id, name=line.name, args=line.args)
+            messages.extend(tool_result_messages(call, line.payload))
+            continue
         content = _agent_content(line)
         if content is not None:
             messages.append(Message(role="assistant", content=content))
@@ -208,12 +239,25 @@ def _agent_content(line: AgentLine) -> str | None:
     return _FAQ_MARKER
 
 
-def _fill(template: str, tenant: Tenant) -> str:
+def _fill(template: str, tenant: Tenant, now: datetime) -> str:
     return template.format(
         spa_name=tenant.name,
         service_names=_english_list(tuple(service.name for service in tenant.services)),
         facts=_bullets(tenant.facts),
         policies=_bullets(tenant.policies),
+        now=_format_now(now, tenant),
+    )
+
+
+def _format_now(now: datetime, tenant: Tenant) -> str:
+    local = now.astimezone(tenant.tz)
+    hour12 = local.hour % 12 or 12
+    ampm = "AM" if local.hour < 12 else "PM"
+    weekday = _WEEKDAYS[local.weekday()]
+    month = _MONTHS[local.month - 1]
+    return (
+        f"{weekday}, {month} {local.day}, {local.year}, "
+        f"{hour12}:{local.minute:02d} {ampm} {tenant.timezone_word}"
     )
 
 

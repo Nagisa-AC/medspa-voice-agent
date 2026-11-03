@@ -21,7 +21,7 @@ from core.prompt import (
     load_template,
     tool_result_messages,
 )
-from core.state import AgentLine, CallerLine, CallState, new_call_state
+from core.state import AgentLine, CallerLine, CallState, ToolExchange, new_call_state
 from core.tenant import Tenant, load_tenant_file
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,21 +84,26 @@ def as_map(value: object) -> Mapping[str, object]:
 
 
 def test_glow_snapshot_matches_fresh_build() -> None:
-    assert build(GLOW, fresh()).dump() == (FIXTURES / "glow.txt").read_text(encoding="utf-8")
+    dumped = build(GLOW, fresh(), now=NOW).dump()
+    assert dumped == (FIXTURES / "glow.txt").read_text(encoding="utf-8")
 
 
 def test_glow_system_has_names_and_seeded_policy_not_prices() -> None:
-    built = build(GLOW, fresh())
+    built = build(GLOW, fresh(), now=NOW)
     system = built.messages[0].content
     assert built.messages[0].role == "system"
     assert system.startswith("You are the virtual receptionist for Glow Aesthetics.")
+    assert "Tuesday, November 3, 2026, 11:00 AM Eastern" in system
     assert "Botox, Dermal Filler, and Weight Loss Program" in system
     assert "- hours: Monday through Friday 9 to 6, Saturday 10 to 4, closed Sunday." in system
     assert "- address: 1420 Chapel Street, Suite 200, New Haven." in system
     assert "- parking: Free lot behind the building, enter from Howe Street." in system
     assert "- cancellation: 24 hours notice, otherwise there's a $50 fee." in system
     assert "- minors: Patients under 18 need a parent or guardian present." in system
-    assert EXCEPTION in " ".join(system.split())
+    folded = " ".join(system.split())
+    assert EXCEPTION in folded
+    assert "Never repeat, summarize, or comment on a line a tool just spoke." in folded
+    assert "Ask the next question instead." in folded
     assert "$50" in system
     for leak in PRICE_LEAKS:
         assert leak not in system
@@ -125,12 +130,13 @@ def test_template_file_has_no_spoken_backend_lines() -> None:
 
 
 def test_fill_follows_the_tenant() -> None:
-    glow = build(GLOW, fresh()).messages[0].content
-    spa = build(SPA, fresh(SPA)).messages[0].content
+    glow = build(GLOW, fresh(), now=NOW).messages[0].content
+    spa = build(SPA, fresh(SPA), now=NOW).messages[0].content
     assert "Glow Aesthetics" in glow
     assert "Test Spa" in spa
     assert "Alpha Treatment, Beta Treatment, and Gamma Program" in spa
     assert "A day's notice, please." in spa
+    assert "Tuesday, November 3, 2026, 10:00 AM Central" in spa
     assert "Glow Aesthetics" not in spa
     assert "$50" not in spa
     assert "Botox" not in spa
@@ -157,7 +163,7 @@ def test_price_marker_hides_the_spoken_quote() -> None:
             ),
         ]
     )
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=NOW)
     history = non_system(built)
     assert [m.role for m in built.messages] == ["system", "user", "assistant"]
     assert built.messages[2].content == PRICE_MARKER
@@ -170,7 +176,7 @@ def test_price_marker_hides_the_spoken_quote() -> None:
 def test_faq_marker_hides_the_spoken_answer() -> None:
     state = fresh()
     state.transcript.append(AgentLine(TOX_SAY, "backend", NOW, history="marker", marker="faq"))
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=NOW)
     history = non_system(built)
     assert FAQ_MARKER in history
     assert TOX_SAY not in history
@@ -189,7 +195,7 @@ def test_include_lines_are_copied() -> None:
             AgentLine("Happy to help.", "model", NOW),
         ]
     )
-    history = non_system(build(GLOW, state))
+    history = non_system(build(GLOW, state, now=NOW))
     assert HEDGE in history
     assert DEFLECT in history
     assert GLOW.ai_identity_reply in history
@@ -206,7 +212,7 @@ def test_omit_hides_book_911_and_callback() -> None:
             AgentLine(BOOK_SAY, "backend", NOW, history="omit"),
         ]
     )
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=NOW)
     assert len(built.messages) == 1
     joined = all_content(built)
     assert EMERGENCY_LINE not in joined
@@ -218,13 +224,13 @@ def test_omit_hides_book_911_and_callback() -> None:
 def test_tag_not_substring_hides_an_included_911_line() -> None:
     state = fresh()
     state.transcript.append(AgentLine(EMERGENCY_LINE, "backend", NOW, history="include"))
-    assert EMERGENCY_LINE in non_system(build(GLOW, state))
+    assert EMERGENCY_LINE in non_system(build(GLOW, state, now=NOW))
 
 
 def test_caller_redaction_is_passed_through() -> None:
     state = fresh()
     state.transcript.append(CallerLine("[redacted:clinical_question]", NOW))
-    built = build(GLOW, state)
+    built = build(GLOW, state, now=NOW)
     assert built.messages[1] == Message(role="user", content="[redacted:clinical_question]")
 
 
@@ -254,6 +260,75 @@ def test_tool_result_messages_are_model_payload_only() -> None:
         assert leak not in tool.content
 
 
+def test_now_must_be_timezone_aware() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        build(GLOW, fresh(), now=datetime(2026, 11, 3, 11, 0))  # noqa: DTZ001
+
+
+def test_tool_exchange_replays_before_include_line() -> None:
+    state = fresh()
+    state.transcript.extend(
+        [
+            CallerLine("what times Thursday", NOW),
+            ToolExchange(
+                "c2",
+                "check_availability",
+                {"service_text": "lip filler"},
+                {"found": True, "already_spoken": True, "slots": ()},
+                NOW,
+            ),
+            AgentLine(AVAIL, "backend", NOW),
+        ]
+    )
+    built = build(GLOW, state, now=NOW)
+    roles = [message.role for message in built.messages]
+    assert roles == ["system", "user", "assistant", "tool", "assistant"]
+    assistant = built.messages[2]
+    tool = built.messages[3]
+    spoken = built.messages[4]
+    assert assistant.tool_calls[0].name == "check_availability"
+    assert assistant.tool_calls[0].id == "c2"
+    assert tool.role == "tool"
+    assert tool.tool_call_id == "c2"
+    assert spoken.content == AVAIL
+    joined = "\n".join(message.content for message in built.messages[1:])
+    assert joined.index('"already_spoken"') < joined.index(AVAIL)
+
+
+def test_tool_exchange_before_price_marker_has_no_quote() -> None:
+    state = fresh()
+    state.transcript.extend(
+        [
+            CallerLine("how much is lip filler", NOW),
+            ToolExchange(
+                "c1",
+                "quote_price",
+                {"service_text": "lip filler"},
+                {"found": True, "service_id": "filler", "already_spoken": True},
+                NOW,
+            ),
+            AgentLine(
+                FILLER_SAY,
+                "backend",
+                NOW,
+                history="marker",
+                marker="price",
+                label="Dermal Filler",
+            ),
+        ]
+    )
+    built = build(GLOW, state, now=NOW)
+    history = non_system(built)
+    assert PRICE_MARKER in history
+    assert history.index('"service_id"') < history.index(PRICE_MARKER)
+    for leak in ("$", "700", "950", "typically"):
+        assert leak not in history
+
+
+def test_tool_exchange_has_no_say_field() -> None:
+    assert "say" not in ToolExchange.__dataclass_fields__
+
+
 def test_extra_appends_after_history() -> None:
     state = fresh()
     state.transcript.append(CallerLine("how much is filler", NOW))
@@ -262,7 +337,7 @@ def test_extra_appends_after_history() -> None:
         call,
         {"found": True, "service_id": "filler", "already_spoken": True},
     )
-    built = build(GLOW, state, extra=extra)
+    built = build(GLOW, state, now=NOW, extra=extra)
     assert built.messages[1].role == "user"
     assert built.messages[-2:] == extra
 
@@ -277,7 +352,7 @@ def test_four_schemas_and_book_requires_confirmed_boolean() -> None:
         "check_availability",
         "book",
     )
-    built = build(GLOW, fresh())
+    built = build(GLOW, fresh(), now=NOW)
     assert built.tools is TOOLS
     book = TOOLS[3]
     params = as_map(book.parameters)
@@ -322,7 +397,7 @@ def test_load_rejects_missing_and_unknown_placeholders(tmp_path: Path) -> None:
     with pytest.raises(PromptFormatError, match="missing"):
         load_template(missing)
     extra = tmp_path / "extra.md"
-    extra.write_text("Hello {spa_name} {service_names} {facts} {policies} {extra}\n")
+    extra.write_text("Hello {spa_name} {service_names} {facts} {policies} {now} {extra}\n")
     with pytest.raises(PromptFormatError, match="unknown"):
         load_template(extra)
 
@@ -357,7 +432,7 @@ def test_repr_hides_quote_and_phone() -> None:
         ToolCall("c1", "book", {"patient_phone": PHONE}),
         {"phone": PHONE},
     )
-    built = build(GLOW, state, extra=extra)
+    built = build(GLOW, state, now=NOW, extra=extra)
     shown = repr(built) + str(built)
     assert shown == "BuiltPrompt(messages=4, tools=4)" * 2
     assert FILLER_SAY not in shown
@@ -387,6 +462,7 @@ def test_prompt_module_imports_are_closed() -> None:
         "functools",
         "json",
         "pathlib",
+        "datetime",
         "string",
         "types",
         "typing",

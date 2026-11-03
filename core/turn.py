@@ -34,6 +34,7 @@ from core.llm import (
     ToolCall,
     ToolCallParseError,
 )
+from core.numbers import caller_phone_plains
 from core.policy import Arm, Commit, Continue, GateResult, PolicyEngine, Reply, normalize_utterance
 from core.prompt import TOOLS, BuiltPrompt, build, tool_result_messages
 from core.state import (
@@ -47,6 +48,7 @@ from core.state import (
     MarkerKind,
     SessionStore,
     StaleStateError,
+    ToolExchange,
     Transfer,
     admit_numbers,
 )
@@ -73,6 +75,7 @@ _MIN_SECRET: Final = 32
 
 HEDGE = "Sorry, I missed that. Could you say it one more time?"
 NUMBER_HEDGE = "Let me get you an exact number on that."
+TRY_AGAIN = "Sorry about that. What would you like to do next?"
 GOODBYE = "Thanks for calling. Goodbye."
 ASK_BEST = "Is the number you're calling from the best one to reach you?"
 ASK_DIGITS = "What number should we use? Area code first, please."
@@ -239,6 +242,8 @@ class _Session:
             trip=trip,
         )
         self.state.transcript.append(CallerLine(stored, now))
+        for value in caller_phone_plains(stored):
+            self.state.allowed_numbers.add(value)
         return result
 
     async def first_commit(self, result: Commit) -> None:
@@ -418,7 +423,12 @@ class _Session:
             await self.speak(sentence, "model", history="include")
             return True
         assert isinstance(checked, Blocked)
-        replacement = self.loop.pack.deflect if checked.check == "clinical" else NUMBER_HEDGE
+        if checked.check == "clinical":
+            replacement = self.loop.pack.deflect
+        elif checked.reason in ("unquoted_amount", "unquoted_price"):
+            replacement = NUMBER_HEDGE
+        else:
+            replacement = TRY_AGAIN
         await self.speak(replacement, "backend", history="include")
         await self.loop.log.append(
             EventDraft(
@@ -450,6 +460,15 @@ class _Session:
         except (KeyError, TypeError, ValueError):
             await self.speak(HEDGE, "backend", history="include")
             return False
+        self.state.transcript.append(
+            ToolExchange(
+                call_id=call.id,
+                name=name,
+                args=call.args,
+                payload=result.model,
+                at=self.loop.clock(),
+            )
+        )
         history, marker, label = _tool_tag(name, result.model, self.loop.tenant)
         await self.speak(result.say, "backend", history=history, marker=marker, label=label)
         await self.loop.log.append(
@@ -589,7 +608,9 @@ class _Session:
         saved = self.state.transcript
         self.state.transcript = saved[: self.turn_start]
         try:
-            return build(self.loop.tenant, self.state, extra=tuple(self.extra))
+            return build(
+                self.loop.tenant, self.state, now=self.loop.clock(), extra=tuple(self.extra)
+            )
         finally:
             self.state.transcript = saved
 

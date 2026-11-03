@@ -33,7 +33,7 @@ from core.state import (
     new_call_state,
 )
 from core.tenant import extra_price_words, load_tenant_file
-from core.turn import NUMBER_HEDGE, OutputChunk, TurnLoop
+from core.turn import NUMBER_HEDGE, TRY_AGAIN, OutputChunk, TurnLoop
 from integrations.booking import MockBookingAdapter, Patient, Slot, SlotTaken, Unavailable
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -206,7 +206,12 @@ def _load_sentences(
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             raise CaseLoadError(str(path), f"rows[{index}] must be a mapping")
-        extra_row = set(row) - {"text", "pattern"}
+        allowed = {"text"}
+        if category == "clinical_output":
+            allowed.add("pattern")
+        elif category == "price_invention":
+            allowed.add("replacement")
+        extra_row = set(row) - allowed
         if extra_row:
             raise CaseLoadError(str(path), f"rows[{index}] unknown fields {sorted(extra_row)}")
         text = row.get("text")
@@ -217,7 +222,7 @@ def _load_sentences(
             if not isinstance(pattern, str) or not pattern:
                 raise CaseLoadError(str(path), f"rows[{index}].pattern is required")
         case_id = f"{stem}_{index}"
-        replacement = NUMBER_HEDGE if category == "price_invention" else _deflect()
+        replacement = _sentence_replacement(row, category, str(path), index)
         script = {
             "turns": [
                 {
@@ -258,6 +263,18 @@ def _load_sentences(
 def _deflect() -> str:
     pack = load_output_pack(PACKS_DIR / "medspa.output.yaml")
     return pack.deflect
+
+
+_INVENTION = {"hedge": NUMBER_HEDGE, "try_again": TRY_AGAIN}
+
+
+def _sentence_replacement(row: Mapping[str, object], category: str, source: str, index: int) -> str:
+    if category != "price_invention":
+        return _deflect()
+    label = row.get("replacement")
+    if not isinstance(label, str) or label not in _INVENTION:
+        raise CaseLoadError(source, f"rows[{index}].replacement must be hedge or try_again")
+    return _INVENTION[label]
 
 
 def _load_case(
