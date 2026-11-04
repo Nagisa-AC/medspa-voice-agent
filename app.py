@@ -34,6 +34,7 @@ from integrations.retell import (
     check_call,
     require_token,
     token_matches,
+    valid_call_id,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -115,12 +116,31 @@ class Runtime:
         self.keys = keys
         self.log = log
         self.loops = loops
+        self.live: dict[str, tuple[asyncio.Lock, CallSession]] = {}
+        self._live_guard = asyncio.Lock()
 
     def __repr__(self) -> str:
         return f"Runtime(agent_id={self.settings.agent_id!r}, tenants={self.tenants.ids})"
 
     def __str__(self) -> str:
         return repr(self)
+
+    async def claim_lock(self, call_id: str) -> tuple[asyncio.Lock, CallSession | None]:
+        async with self._live_guard:
+            entry = self.live.get(call_id)
+            if entry is None:
+                return asyncio.Lock(), None
+            return entry[0], entry[1]
+
+    async def register(self, call_id: str, lock: asyncio.Lock, session: CallSession) -> None:
+        async with self._live_guard:
+            self.live[call_id] = (lock, session)
+
+    async def drop(self, call_id: str, session: CallSession) -> None:
+        async with self._live_guard:
+            entry = self.live.get(call_id)
+            if entry is not None and entry[1] is session:
+                del self.live[call_id]
 
     @classmethod
     def from_env(cls) -> Runtime:
@@ -203,6 +223,10 @@ async def _handle_socket(
     tenant_id: str,
     call_id: str,
 ) -> None:
+    if not valid_call_id(call_id):
+        log_ids("ws_reject", reason="invalid")
+        await websocket.close(code=_CLOSE_POLICY)
+        return
     if not token_matches(token, runtime.settings.ws_token):
         await _reject(websocket, call_id=call_id, reason="token")
         return
@@ -222,6 +246,9 @@ async def _handle_socket(
         return
     await websocket.accept()
     log_ids("ws_open", call_id=call_id, tenant_id=tenant.id)
+    lock, previous = await runtime.claim_lock(call_id)
+    if previous is not None:
+        await previous.supersede()
     stored = await runtime.store.get(call_id)
     reconnect = stored is not None
     if stored is None:
@@ -254,13 +281,15 @@ async def _handle_socket(
         websocket,
         loop=loop,
         state=state,
-        lock=asyncio.Lock(),
+        lock=lock,
         call_id=call_id,
         tenant_id=tenant.id,
     )
+    await runtime.register(call_id, lock, session)
     try:
         await session.run(reconnect=reconnect)
     finally:
+        await runtime.drop(call_id, session)
         log_ids("ws_close", call_id=call_id, tenant_id=tenant.id)
 
 

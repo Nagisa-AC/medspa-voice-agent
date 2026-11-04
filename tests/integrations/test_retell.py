@@ -44,6 +44,7 @@ from integrations.retell import (
     parse_inbound,
     require_token,
     token_matches,
+    valid_call_id,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -295,6 +296,15 @@ def test_require_token_min_length() -> None:
     assert require_token(TOKEN) == TOKEN
 
 
+def test_valid_call_id_shape() -> None:
+    assert valid_call_id("call_ws-1") is True
+    assert valid_call_id("A" * 128) is True
+    assert valid_call_id("A" * 129) is False
+    assert valid_call_id("bad.call") is False
+    assert valid_call_id("has space") is False
+    assert valid_call_id("") is False
+
+
 @pytest.mark.parametrize("status", sorted(ALLOWED_STATUS))
 def test_check_call_accepts_registered_and_ongoing(status: str) -> None:
     check_call(CallInfo(CALL, AGENT, status), AGENT)
@@ -357,6 +367,20 @@ def test_call_info_repr_omits_from_number() -> None:
 
 
 # --------------------------------------------------------------------------- websocket auth
+
+
+def test_invalid_call_id_closes_without_logging_it(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    runtime, lookup = make_runtime()
+    client = TestClient(create_app(runtime))
+    bad = "bad.call"
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(ws_url(call_id=bad)):
+            pass
+    assert exc.value.code == 1008
+    assert lookup.calls == []
+    assert bad not in caplog.text
+    assert "invalid" in caplog.text
 
 
 def test_bad_token_closes_without_lookup() -> None:
@@ -437,6 +461,39 @@ def test_first_connect_greets_then_disclosure() -> None:
     assert state is not None
     assert state.caller_number == "+12035550148"
     assert state.turn_count == 0
+
+
+def test_second_socket_supersedes_first() -> None:
+    gate = GateModel()
+    runtime, _lookup = make_runtime(model=gate)
+    with TestClient(create_app(runtime)) as client:
+        with client.websocket_connect(ws_url()) as first:
+            drain_begin(first)
+            first.send_json(response_required(1, FILLER))
+            assert gate.entered.wait(timeout=2)
+            with client.websocket_connect(ws_url()) as second:
+                with pytest.raises(WebSocketDisconnect) as exc:
+                    first.receive_json()
+                assert exc.value.code == 1001
+                frames = drain_begin(second)
+                spoken = [f["content"] for f in frames if f.get("response_type") == "response"]
+                assert spoken == [""]
+                second.send_json(response_required(1, FILLER))
+                gate.release.set()
+                receive_until(
+                    second,
+                    lambda frame: (
+                        frame.get("response_type") == "response"
+                        and frame.get("response_id") == 1
+                        and frame.get("content_complete") is True
+                    ),
+                )
+    state = load_state(runtime)
+    assert state is not None
+    assert [line.text for line in caller_lines(state)] == [FILLER]
+    assert state.turn_count == 1
+    assert "error" not in load_kinds(runtime)
+    assert runtime.live == {}
 
 
 def test_reconnect_empty_begin_does_not_greet_again() -> None:
@@ -575,6 +632,27 @@ def test_commit_mid_turn_cancels_old_and_commits_once() -> None:
     assert kinds.count("escalation_path_chosen") == 1
     assert "error" not in kinds
     assert "Happy to help." not in [f.get("content") for f in frames + follow]
+
+
+def test_update_only_skips_when_committed() -> None:
+    runtime, _lookup = make_runtime()
+    client = TestClient(create_app(runtime))
+    with client.websocket_connect(ws_url()) as ws:
+        drain_begin(ws)
+        ws.send_json(response_required(1, EMERGENCY))
+        receive_until(
+            ws,
+            lambda frame: (
+                frame.get("response_type") == "response" and frame.get("content_complete") is True
+            ),
+        )
+        ws.send_json(update_only("get me a real person"))
+        ws.send_json(SAMPLE_PING)
+        assert ws.receive_json()["response_type"] == "ping_pong"
+    kinds = load_kinds(runtime)
+    assert kinds.count("tripwire_fired") == 1
+    assert kinds.count("escalation_committed") == 1
+    assert "error" not in kinds
 
 
 def test_update_only_with_no_inflight_does_not_record() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import re
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -14,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from core.events import log_ids
 from core.policy import Arm, Commit, Continue, Reply
-from core.state import CallState
+from core.state import CallState, Committed
 from core.turn import HEDGE, OutputChunk, TurnLoop
 
 _TOKEN_MIN = 32
@@ -22,6 +23,8 @@ _LOOKUP_TIMEOUT_S = 2.0
 ALLOWED_STATUS = frozenset({"registered", "ongoing"})
 _CLOSE_POLICY = 1008
 _CLOSE_BAD_DATA = 1007
+_CLOSE_GOING_AWAY = 1001
+_CALL_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 class CallLookupError(Exception):
@@ -106,6 +109,10 @@ def require_token(token: str) -> str:
     if len(token) < _TOKEN_MIN:
         raise ValueError("RETELL_WS_TOKEN must be at least 32 characters")
     return token
+
+
+def valid_call_id(call_id: str) -> bool:
+    return bool(_CALL_ID.fullmatch(call_id))
 
 
 # --------------------------------------------------------------------------- pydantic events
@@ -226,6 +233,13 @@ class CallSession:
     def __str__(self) -> str:
         return repr(self)
 
+    async def supersede(self) -> None:
+        await self._cancel_current()
+        try:
+            await self._ws.close(code=_CLOSE_GOING_AWAY)
+        except Exception:
+            return
+
     async def run(self, *, reconnect: bool) -> None:
         await self._send(
             {
@@ -297,6 +311,8 @@ class CallSession:
         log_ids("ws_unknown_event", call_id=self.call_id)
 
     async def _on_update(self, raw: dict[str, object]) -> None:
+        if isinstance(self.state.escalation, Committed):
+            return
         if self._task is None or self._task.done():
             return
         utterance = last_user_text(raw.get("transcript"))
