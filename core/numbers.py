@@ -127,6 +127,20 @@ _CUE_PHRASES: tuple[tuple[str, ...], ...] = (
     ("is", "around"),
 )
 _PHONE_PUNCT = frozenset({"+", "-", _EN_DASH, _EM_DASH, ".", "(", ")"})
+_PHONE_SEPS = _PHONE_PUNCT | {","}
+_SPOKEN_DIGIT: dict[str, int] = {**_ONES, "oh": 0}
+_DIGIT_WORDS: tuple[str, ...] = (
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+)
 _HYPHENS = frozenset({"-", _EN_DASH, _EM_DASH})
 _PRICE_WINDOW = 3
 _CURRENCY_AFTER = 2
@@ -645,7 +659,9 @@ def caller_phone_plains(text: str) -> tuple[Decimal, ...]:
     values: list[Decimal] = []
     i = 0
     while i < len(tokens):
-        matched = _try_phone(tokens, i)
+        matched = _try_spoken_nanp(tokens, i)
+        if matched is None:
+            matched = _try_phone(tokens, i)
         if matched is None:
             i += 1
             continue
@@ -655,6 +671,83 @@ def caller_phone_plains(text: str) -> tuple[Decimal, ...]:
             values.extend(hit.value for hit in hits)
         i = nxt
     return tuple(values)
+
+
+def speak_phone(e164: str) -> str:
+    """Grouped spoken digits from normalized E.164. NANP drops the leading 1."""
+    if e164.startswith("+1") and len(e164) == 12 and e164[2:].isdigit():
+        digits = e164[2:]
+        area, exchange, line = digits[:3], digits[3:6], digits[6:]
+        return f"{_digit_words(area)}, {_digit_words(exchange)}, {_digit_words(line)}"
+    digits = "".join(ch for ch in e164 if ch.isdigit())
+    return ", ".join(_digit_words(group) for group in _e164_digit_groups(digits))
+
+
+def _digit_words(digits: str) -> str:
+    return " ".join(_DIGIT_WORDS[int(ch)] for ch in digits)
+
+
+def _e164_digit_groups(digits: str) -> tuple[str, ...]:
+    n = len(digits)
+    if n == 0:
+        return ()
+    if n <= 4:
+        return (digits,)
+    if n % 3 == 0:
+        return tuple(digits[i : i + 3] for i in range(0, n, 3))
+    if n % 3 == 1:
+        head, tail = digits[:-4], digits[-4:]
+        return (*tuple(head[i : i + 3] for i in range(0, len(head), 3)), tail)
+    if n < 8:
+        return (digits[:3], digits[3:]) if n == 5 else (digits[:4], digits[4:])
+    head, tail = digits[:-8], digits[-8:]
+    return (*tuple(head[i : i + 3] for i in range(0, len(head), 3)), tail[:4], tail[4:])
+
+
+def _spoken_digit(token: Token) -> str | None:
+    if token.kind == "word" and token.norm in _SPOKEN_DIGIT:
+        return str(_SPOKEN_DIGIT[token.norm])
+    if (
+        token.kind == "digits"
+        and token.number is not None
+        and "," not in token.text
+        and "." not in token.text
+    ):
+        return "".join(ch for ch in token.text if ch.isdigit())
+    return None
+
+
+def _try_spoken_nanp(tokens: list[Token], i: int) -> tuple[list[_Hit], int] | None:
+    j = i
+    if tokens[j].kind == "punct" and tokens[j].norm == "+":
+        j += 1
+        if j >= len(tokens):
+            return None
+    if _spoken_digit(tokens[j]) is None:
+        return None
+    digits = ""
+    k = j
+    last_atom_hi = j
+    while k < len(tokens):
+        atom = _spoken_digit(tokens[k])
+        if atom is not None:
+            digits += atom
+            last_atom_hi = k + 1
+            k += 1
+            continue
+        if tokens[k].kind == "punct" and tokens[k].norm in _PHONE_SEPS:
+            k += 1
+            continue
+        break
+    if not _is_nanp_10_or_11(digits):
+        return None
+    full = Decimal(digits)
+    hits = [_hit(full, tokens, i, last_atom_hi, marked_amount=False)]
+    national = digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
+    for group in (national[:3], national[3:6], national[6:]):
+        if abs(int(group)) >= 10:
+            hits.append(_hit(Decimal(group), tokens, i, last_atom_hi, marked_amount=False))
+    return hits, last_atom_hi
 
 
 def _digit_str(value: Decimal) -> str:

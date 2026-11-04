@@ -9,7 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 import core.numbers
-from core.numbers import Found, caller_phone_plains, find_numbers, integer_to_words
+from core.numbers import Found, caller_phone_plains, find_numbers, integer_to_words, speak_phone
 from core.state import NumberExtractor, new_call_state
 from core.tenant import load_tenant_file
 
@@ -183,6 +183,46 @@ def test_caller_phone_plains_ignores_amount() -> None:
 
 def test_caller_phone_plains_skips_seven_digit() -> None:
     assert caller_phone_plains("555-1234") == ()
+
+
+SPOKEN_NANP = "Two zero three. Five five five one two three four."
+NANP_PLAINS = {D("2035551234"), D(203), D(555), D(1234)}
+
+
+def test_caller_phone_plains_spoken_digit_words() -> None:
+    assert set(caller_phone_plains(SPOKEN_NANP)) == NANP_PLAINS
+
+
+def test_caller_phone_plains_spoken_after_name() -> None:
+    assert set(caller_phone_plains(f"Donna Raes. {SPOKEN_NANP}")) == NANP_PLAINS
+
+
+def test_caller_phone_plains_oh_as_zero() -> None:
+    text = "two oh three five five five one two three four"
+    assert set(caller_phone_plains(text)) == NANP_PLAINS
+
+
+def test_caller_phone_plains_spoken_seven_digit_is_skipped() -> None:
+    assert caller_phone_plains("five five five one two three four") == ()
+
+
+def test_find_numbers_does_not_glue_digit_words_into_a_phone() -> None:
+    values = {found.value for found in find_numbers("I have two openings")}
+    assert D("2035551234") not in values
+    assert D(2) in values
+
+
+def test_speak_phone_nanp_groups_digits_without_plus_one() -> None:
+    spoken = speak_phone("+12035551234")
+    assert spoken == "two zero three, five five five, one two three four"
+    assert "+" not in spoken
+    assert "plus" not in spoken
+
+
+def test_speak_phone_non_nanp_groups_of_three_or_four() -> None:
+    spoken = speak_phone("+442071234567")
+    assert spoken == "four four two, zero seven one, two three four, five six seven"
+    assert "+" not in spoken
 
 
 def test_tenant_price_unit_phrase() -> None:

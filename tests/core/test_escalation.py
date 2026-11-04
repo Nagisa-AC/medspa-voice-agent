@@ -367,6 +367,7 @@ def test_mapped_category_labels() -> None:
     assert category_label("legal_or_complaint") == "complaint or legal"
     assert category_label("clinical_question") == "clinical question"
     assert category_label("medical_emergency") == "medical emergency"
+    assert category_label("repeated_output_block") == "needs a person"
 
 
 # --------------------------------------------------------------------------- layers

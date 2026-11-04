@@ -11,7 +11,7 @@ import pytest
 
 import tools.scheduling
 from core.guardrail import Blocked, Pass, check_numbers
-from core.numbers import find_numbers
+from core.numbers import find_numbers, speak_phone
 from core.state import CallState, OfferedSlot, new_call_state
 from core.tenant import CONSULT_ID, LiveHours, extra_price_words, load_tenant_file
 from integrations.booking import MockBookingAdapter, MockSchedule, Provider, Room, Slot
@@ -39,6 +39,7 @@ FRIDAY_13 = datetime(2026, 11, 13, 17, 0, tzinfo=NY)
 SECRET = b"n" * 32
 NAME = "Dana Reyes"
 PHONE = "+12035551234"
+PHONE_SPOKEN = "two zero three, five five five, one two three four"
 REVIEW = "I've got your request in and someone from the team will confirm with you."
 
 
@@ -417,6 +418,7 @@ def test_scheduling_import_layers() -> None:
     assert imported == {
         "__future__",
         "collections.abc",
+        "core.numbers",
         "core.state",
         "core.tenant",
         "dataclasses",
@@ -475,6 +477,9 @@ async def test_book_filler_success_and_deposit() -> None:
         "Just so you know, there's a $100 deposit for this treatment."
     )
     assert "text" not in result.say.lower()
+    assert PHONE_SPOKEN not in result.say
+    assert "+1" not in result.say
+    assert "two zero three" not in result.say
     assert result.model == {
         "booked": True,
         "needs_review": False,
@@ -515,11 +520,24 @@ async def test_book_refuses_without_confirmation() -> None:
     offered = list(state.offered_slots)
     result = await book_it(state, adapter, iso, confirmed=False)
     assert result.say == (
-        "Just to confirm: Botox on Friday the 13th at 5:00 PM. Should I go ahead and book that?"
+        "Just to confirm: Botox on Friday the 13th at 5:00 PM, "
+        f"and we'll reach you at {PHONE_SPOKEN}. Should I go ahead and book that?"
     )
+    assert PHONE_SPOKEN in result.say
+    assert "+1" not in result.say
+    assert "+" not in result.say
     assert result.model["booked"] is False
     assert adapter._bookings == {}
     assert state.offered_slots == offered
+    assert_say_passes(state, result.say)
+    following = f"I'll use {PHONE_SPOKEN}."
+    checked = check_numbers(
+        following,
+        allowed_amounts=state.allowed_amounts,
+        allowed_numbers=state.allowed_numbers,
+        extract=glow_extract,
+    )
+    assert isinstance(checked, Pass)
 
 
 async def test_book_refuses_blank_name() -> None:
@@ -777,7 +795,29 @@ async def test_book_confirm_without_unique_slot() -> None:
     _listed, state, adapter = await seed("botox")
     offered = list(state.offered_slots)
     result = await book_it(state, adapter, "2026-11-16T14:00:00", confirmed=False)
-    assert result.say == "Just to confirm — should I go ahead and book that?"
+    assert result.say == (
+        f"Just to confirm — we'll reach you at {PHONE_SPOKEN}. Should I go ahead and book that?"
+    )
+    assert "+1" not in result.say
     assert result.model["booked"] is False
     assert adapter._bookings == {}
     assert state.offered_slots == offered
+    assert_say_passes(state, result.say)
+
+
+async def test_book_confirm_uses_normalized_phone_not_model_text() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    result = await book_it(state, adapter, iso, phone="(203) 555-1234", confirmed=False)
+    assert speak_phone(PHONE) in result.say
+    assert "(203)" not in result.say
+    assert "555-1234" not in result.say
+    assert "+1" not in result.say
+
+
+async def test_book_confirm_without_reachable_phone_asks_again() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    result = await book_it(state, adapter, iso, phone="555-1234", confirmed=False)
+    assert result.say == "Can I get a good number to reach you at?"
+    assert result.model["booked"] is False

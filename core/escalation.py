@@ -35,6 +35,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "hostility": "difficult call",
     "prompt_injection": "difficult call",
     "legal_or_complaint": "complaint or legal",
+    "repeated_output_block": "needs a person",
 }
 
 

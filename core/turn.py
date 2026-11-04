@@ -36,7 +36,7 @@ from core.llm import (
     ToolCall,
     ToolCallParseError,
 )
-from core.numbers import caller_phone_plains
+from core.numbers import caller_phone_plains, speak_phone
 from core.policy import Arm, Commit, Continue, GateResult, PolicyEngine, Reply, normalize_utterance
 from core.prompt import TOOLS, BuiltPrompt, build, tool_result_messages
 from core.state import (
@@ -88,18 +88,6 @@ GIVE_UP = "I'll have the team follow up with the number we have. Thanks for call
 _YES_FIRST = frozenset({"yes", "yeah", "yep", "yup", "sure", "correct"})
 _NO_FIRST = frozenset({"no", "nope"})
 _NO_TOKENS = frozenset({"no", "nope"})
-_DIGIT_WORDS = (
-    "zero",
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-    "eight",
-    "nine",
-)
 
 
 ToolResult = QuotePriceResult | LookupFaqResult | CheckAvailabilityResult | BookResult
@@ -234,22 +222,28 @@ class _Session:
         self.turn_start = 0
         self.passed_model: list[str] = []
         self.round_payloads: list[tuple[ToolCall, Mapping[str, object]]] = []
+        self.ended_in_block = False
 
     async def caller_turn(self, utterance: str) -> None:
+        self.ended_in_block = False
         result = await self.record_utterance(utterance)
         self.turn_start = len(self.state.transcript)
-        if isinstance(self.state.escalation, Committed):
-            await self.replay_committed(utterance)
-            return
-        if isinstance(result, Commit):
-            await self.first_commit(result)
-            return
-        if isinstance(result, Reply):
-            await self.speak(result.script, "backend", history="include")
-            return
-        if isinstance(result, Arm):
-            self.state.record_arm(result.trip)
-        await self.model_turn()
+        try:
+            if isinstance(self.state.escalation, Committed):
+                await self.replay_committed(utterance)
+                return
+            if isinstance(result, Commit):
+                await self.first_commit(result)
+                return
+            if isinstance(result, Reply):
+                await self.speak(result.script, "backend", history="include")
+                return
+            if isinstance(result, Arm):
+                self.state.record_arm(result.trip)
+            await self.model_turn()
+        finally:
+            if not self.ended_in_block:
+                self.state.consecutive_blocks = 0
 
     async def record_utterance(self, utterance: str) -> GateResult:
         self.state.turn_count += 1
@@ -356,7 +350,7 @@ class _Session:
     async def _accept_phone(self, phone: str) -> None:
         self.state.caller_number = phone
         self.state.caller_number_confirmed = True
-        await self.speak(READBACK.format(spoken=_speak_phone(phone)), "backend", history="include")
+        await self.speak(READBACK.format(spoken=speak_phone(phone)), "backend", history="include")
         await self._finish_callback()
 
     async def _finish_callback(self) -> None:
@@ -451,13 +445,8 @@ class _Session:
             await self.speak(sentence, "model", history="include")
             return True
         assert isinstance(checked, Blocked)
-        if checked.check == "clinical":
-            replacement = self.loop.pack.deflect
-        elif checked.reason in ("unquoted_amount", "unquoted_price"):
-            replacement = NUMBER_HEDGE
-        else:
-            replacement = TRY_AGAIN
-        await self.speak(replacement, "backend", history="include")
+        self.ended_in_block = True
+        self.state.consecutive_blocks += 1
         await self.loop.log.append(
             EventDraft(
                 call_id=self.state.call_id,
@@ -467,6 +456,16 @@ class _Session:
                 payload={"check": checked.check, "pattern_ids": list(checked.pattern_ids)},
             )
         )
+        if self.state.consecutive_blocks >= 2:
+            await self.first_commit(Commit("repeated_output_block", "HARD", False))
+            return False
+        if checked.check == "clinical":
+            replacement = self.loop.pack.deflect
+        elif checked.reason in ("unquoted_amount", "unquoted_price"):
+            replacement = NUMBER_HEDGE
+        else:
+            replacement = TRY_AGAIN
+        await self.speak(replacement, "backend", history="include")
         return False
 
     async def _dispatch(self, call: ToolCall) -> bool:
@@ -777,6 +776,7 @@ class _TurnSnap:
     turn_count: int
     allowed_numbers: set[Decimal]
     allowed_amounts: set[Decimal]
+    consecutive_blocks: int
 
 
 def _snap_turn(state: CallState) -> _TurnSnap:
@@ -785,6 +785,7 @@ def _snap_turn(state: CallState) -> _TurnSnap:
         turn_count=state.turn_count,
         allowed_numbers=set(state.allowed_numbers),
         allowed_amounts=set(state.allowed_amounts),
+        consecutive_blocks=state.consecutive_blocks,
     )
 
 
@@ -795,6 +796,7 @@ def _restore_turn(state: CallState, snap: _TurnSnap) -> None:
     state.allowed_numbers.update(snap.allowed_numbers)
     state.allowed_amounts.clear()
     state.allowed_amounts.update(snap.allowed_amounts)
+    state.consecutive_blocks = snap.consecutive_blocks
 
 
 def _is_yes(folded: str) -> bool:
@@ -834,17 +836,6 @@ def _tool_tag(
     if name == "book":
         return "omit", None, None
     return "include", None, None
-
-
-def _speak_phone(e164: str) -> str:
-    if e164.startswith("+1") and len(e164) == 12 and e164[2:].isdigit():
-        digits = e164[2:]
-        return f"{_words(digits[:3])}, {_words(digits[3:6])}, {_words(digits[6:])}"
-    return " ".join(_DIGIT_WORDS[int(char)] for char in e164 if char.isdigit())
-
-
-def _words(digits: str) -> str:
-    return " ".join(_DIGIT_WORDS[int(char)] for char in digits)
 
 
 def _jsonable(value: object) -> object:

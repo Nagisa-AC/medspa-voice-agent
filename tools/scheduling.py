@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
 
+from core.numbers import speak_phone
 from core.state import CallState, NumberExtractor, OfferedSlot, admit_numbers
 from core.tenant import (
     CONSULT_ID,
@@ -40,8 +41,13 @@ EMPTY = "I don't have anything in the next two weeks."
 UNKNOWN_PREFIX = "I don't have that on the list. I can book a consult. "
 UNKNOWN_EMPTY = "I don't have that on the list. I don't have anything in the next two weeks."
 AMBIGUOUS = "Which were you asking about, {names}?"
-CONFIRM = "Just to confirm: {what} on {time}. Should I go ahead and book that?"
-CONFIRM_BARE = "Just to confirm — should I go ahead and book that?"
+CONFIRM = (
+    "Just to confirm: {what} on {time}, and we'll reach you at {phone_spoken}. "
+    "Should I go ahead and book that?"
+)
+CONFIRM_BARE = (
+    "Just to confirm — we'll reach you at {phone_spoken}. Should I go ahead and book that?"
+)
 NEED_NAME = "I need a name for the booking."
 NEED_PHONE = "Can I get a good number to reach you at?"
 NO_OFFER = "Let me find you a time. What would you like to book?"
@@ -325,13 +331,24 @@ async def book(
         raise ValueError("secret must be at least 32 bytes")
     hits = _matching_offers(state, slot_start_iso, tenant.tz)
     if confirmed is not True:
+        phone = normalize_phone(patient_phone)
+        if phone is None:
+            return _finish(
+                state,
+                NEED_PHONE,
+                _flags(booked=False, needs_review=False, retry=False),
+                extract,
+                service_id=hits[0].service_id if len(hits) == 1 else None,
+            )
+        spoken = speak_phone(phone)
         if len(hits) == 1:
             say = CONFIRM.format(
                 what=_spoken_what(tenant, hits[0].service_id),
                 time=format_slot_time(hits[0].start, tenant.tz),
+                phone_spoken=spoken,
             )
         else:
-            say = CONFIRM_BARE
+            say = CONFIRM_BARE.format(phone_spoken=spoken)
         return _finish(
             state,
             say,

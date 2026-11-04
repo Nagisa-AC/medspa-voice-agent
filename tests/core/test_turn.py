@@ -30,7 +30,15 @@ from core.llm import (
 from core.numbers import find_numbers
 from core.policy import load_policy_engine
 from core.prompt import build
-from core.state import AgentLine, CallerLine, InMemorySessionStore, ToolExchange, new_call_state
+from core.state import (
+    AgentLine,
+    CallerLine,
+    Committed,
+    InMemorySessionStore,
+    ToolExchange,
+    Transfer,
+    new_call_state,
+)
 from core.tenant import extra_price_words, load_tenant_file
 from core.turn import (
     ASK_BEST,
@@ -279,6 +287,91 @@ async def test_caller_nanp_readback_passes() -> None:
     assert "I'll use 203-555-1234." in spoken
     assert NUMBER_HEDGE not in spoken
     assert TRY_AGAIN not in spoken
+
+
+SPOKEN_NANP = "Two zero three. Five five five one two three four."
+
+
+async def test_caller_spoken_nanp_readback_passes() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("p", "I'll use 203-555-1234.")))
+    chunks = await collect(loop.handle_caller_turn(state, SPOKEN_NANP))
+    spoken = [chunk.text for chunk in chunks]
+    assert "I'll use 203-555-1234." in spoken
+    assert TRY_AGAIN not in spoken
+    assert NUMBER_HEDGE not in spoken
+    assert Decimal("2035551234") in state.allowed_numbers
+    assert Decimal(555) in state.allowed_numbers
+
+
+async def test_two_consecutive_blocks_transfer_on_weekday() -> None:
+    invent = "We have 47 openings tomorrow."
+    loop, state, log, _store = await setup(
+        model=_scripted(_text("n1", invent), _text("n2", invent)),
+        started=TUE,
+    )
+    first = await collect(loop.handle_caller_turn(state, "when can I come in"))
+    assert TRY_AGAIN in [chunk.text for chunk in first]
+    assert TRANSFER_LINE not in [chunk.text for chunk in first]
+    assert state.consecutive_blocks == 1
+    second = await collect(loop.handle_caller_turn(state, "still looking for a time"))
+    texts = [chunk.text for chunk in second]
+    assert TRY_AGAIN not in texts
+    assert TRANSFER_LINE in texts
+    assert second[-1].transfer_number == "+12035550101"
+    assert state.consecutive_blocks == 2
+    assert isinstance(state.escalation, Committed)
+    assert isinstance(state.escalation.path, Transfer)
+    assert state.escalation.trip == "repeated_output_block"
+    kind_list = await kinds(log)
+    assert kind_list.count("guardrail_blocked") == 2
+    assert kind_list.count("sms_logged") == 1
+    assert "tripwire_fired" in kind_list
+    assert "escalation_committed" in kind_list
+
+
+async def test_two_consecutive_blocks_callback_on_sunday() -> None:
+    invent = "We have 47 openings tomorrow."
+    loop, state, log, _store = await setup(
+        model=_scripted(_text("n1", invent), _text("n2", invent)),
+        started=SUN,
+    )
+    await collect(loop.handle_caller_turn(state, "when can I come in"))
+    second = await collect(loop.handle_caller_turn(state, "still looking for a time"))
+    texts = [chunk.text for chunk in second]
+    assert TRY_AGAIN not in texts
+    assert TRANSFER_LINE not in texts
+    assert ASK_BEST in texts
+    assert second[-1].transfer_number is None
+    assert (await kinds(log)).count("sms_logged") == 1
+
+
+async def test_pass_between_blocks_does_not_escalate() -> None:
+    invent = "We have 47 openings tomorrow."
+    loop, state, _log, _store = await setup(
+        model=_scripted(_text("n1", invent), _text("ok", "Happy to help."), _text("n3", invent)),
+        started=TUE,
+    )
+    first = await collect(loop.handle_caller_turn(state, "when can I come in"))
+    assert TRY_AGAIN in [chunk.text for chunk in first]
+    mid = await collect(loop.handle_caller_turn(state, "hello there friend"))
+    assert "Happy to help." in [chunk.text for chunk in mid]
+    assert state.consecutive_blocks == 0
+    third = await collect(loop.handle_caller_turn(state, "when can I come in"))
+    texts = [chunk.text for chunk in third]
+    assert TRY_AGAIN in texts
+    assert TRANSFER_LINE not in texts
+    assert state.consecutive_blocks == 1
+
+
+async def test_spoken_nanp_does_not_trip_loop_breaker() -> None:
+    loop, state, log, _store = await setup(
+        model=_scripted(_text("p", "I'll use 203-555-1234."), _text("ok", "Happy to help."))
+    )
+    first = await collect(loop.handle_caller_turn(state, SPOKEN_NANP))
+    assert TRY_AGAIN not in [chunk.text for chunk in first]
+    second = await collect(loop.handle_caller_turn(state, "thanks so much"))
+    assert TRANSFER_LINE not in [chunk.text for chunk in second]
+    assert "tripwire_fired" not in await kinds(log)
 
 
 async def test_caller_dollar_amount_still_blocks_model_price() -> None:

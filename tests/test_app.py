@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+import io
+import logging
+import os
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from websockets.asyncio.client import connect
 
-from app import Settings, create_app
-from tests.integrations.test_retell import TOKEN, make_runtime, ws_url
+from app import Settings, create_app, install_ws_path_filter
+from tests.integrations.test_retell import CALL, TENANT, TOKEN, make_runtime, ws_url
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_health_ok() -> None:
@@ -99,3 +112,113 @@ def test_health_does_not_require_websocket() -> None:
     client = TestClient(create_app(runtime))
     assert client.get("/health").json() == {"ok": True}
     assert ws_url().startswith("/llm-websocket/")
+
+
+def test_ws_path_filter_redacts_token_in_record_args() -> None:
+    install_ws_path_filter()
+    path = f"/llm-websocket/{TOKEN}/glow_aesthetics/{CALL}"
+    record = logging.LogRecord(
+        name="uvicorn.error",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "WebSocket %s" [accepted]',
+        args=("127.0.0.1:9", path),
+        exc_info=None,
+    )
+    assert logging.getLogger("uvicorn.error").filter(record)
+    message = record.getMessage()
+    assert TOKEN not in message
+    assert "/llm-websocket/<redacted>" in message
+    assert "[accepted]" in message
+
+
+def test_child_logger_record_is_redacted_on_root_handler() -> None:
+    path = f"/llm-websocket/{TOKEN}/glow_aesthetics/{CALL}"
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    child = logging.getLogger("websockets.server")
+    previous_level = child.level
+    root.addHandler(handler)
+    try:
+        install_ws_path_filter()
+        child.setLevel(logging.WARNING)
+        child.warning("x %s", path)
+        out = stream.getvalue()
+        assert TOKEN not in out
+        assert "/llm-websocket/<redacted>" in out
+        assert "x " in out
+    finally:
+        root.removeHandler(handler)
+        child.setLevel(previous_level)
+        handler.close()
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_health(port: int, proc: subprocess.Popen[str]) -> None:
+    url = f"http://127.0.0.1:{port}/health"
+    for _ in range(50):
+        if proc.poll() is not None:
+            out, _ = proc.communicate()
+            raise AssertionError(f"uvicorn exited {proc.returncode}: {out}")
+        try:
+            with urllib.request.urlopen(url, timeout=0.2) as response:
+                if response.status == 200:
+                    return
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            time.sleep(0.1)
+    proc.kill()
+    out, _ = proc.communicate()
+    raise AssertionError(f"health never came up: {out}")
+
+
+def test_uvicorn_accept_log_never_contains_ws_token() -> None:
+    port = _free_port()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT)
+    env["PYTHONUNBUFFERED"] = "1"
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            (
+                "from app import create_app; "
+                "from tests.integrations.test_retell import make_runtime; "
+                "import sys, uvicorn; "
+                "uvicorn.run(create_app(make_runtime()[0]), host='127.0.0.1', "
+                "port=int(sys.argv[1]), access_log=False, log_level='info')"
+            ),
+            str(port),
+        ],
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        _wait_health(port, proc)
+
+        async def _hit() -> None:
+            uri = f"ws://127.0.0.1:{port}/llm-websocket/{TOKEN}/{TENANT}/{CALL}"
+            async with connect(uri, open_timeout=5):
+                await asyncio.sleep(0.3)
+
+        asyncio.run(_hit())
+    finally:
+        proc.terminate()
+        try:
+            out, _ = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, _ = proc.communicate()
+    assert TOKEN not in out, out
+    assert "accepted" in out.lower(), out
