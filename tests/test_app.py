@@ -179,7 +179,7 @@ def _wait_health(port: int, proc: subprocess.Popen[str]) -> None:
     raise AssertionError(f"health never came up: {out}")
 
 
-def test_uvicorn_accept_log_never_contains_ws_token() -> None:
+def _uvicorn_output(token: str, *, expect_open: bool) -> str:
     port = _free_port()
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
@@ -208,9 +208,13 @@ def test_uvicorn_accept_log_never_contains_ws_token() -> None:
         _wait_health(port, proc)
 
         async def _hit() -> None:
-            uri = f"ws://127.0.0.1:{port}/llm-websocket/{TOKEN}/{TENANT}/{CALL}"
-            async with connect(uri, open_timeout=5):
-                await asyncio.sleep(0.3)
+            uri = f"ws://127.0.0.1:{port}/llm-websocket/{token}/{TENANT}/{CALL}"
+            try:
+                async with connect(uri, open_timeout=5):
+                    await asyncio.sleep(0.3)
+            except Exception:
+                if expect_open:
+                    raise
 
         asyncio.run(_hit())
     finally:
@@ -220,5 +224,20 @@ def test_uvicorn_accept_log_never_contains_ws_token() -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             out, _ = proc.communicate()
+    return out
+
+
+def test_uvicorn_accept_log_never_contains_ws_token() -> None:
+    out = _uvicorn_output(TOKEN, expect_open=True)
     assert TOKEN not in out, out
     assert "accepted" in out.lower(), out
+
+
+def test_uvicorn_reject_logs_ws_reject_reason_token() -> None:
+    bad = "x" * 32
+    out = _uvicorn_output(bad, expect_open=False)
+    assert "ws_reject" in out, out
+    assert "reason=token" in out, out
+    assert TOKEN not in out, out
+    assert bad not in out, out
+    assert "/llm-websocket/<redacted>" in out or "accepted" not in out.lower()

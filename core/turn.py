@@ -78,6 +78,8 @@ _MIN_SECRET: Final = 32
 HEDGE = "Sorry, I missed that. Could you say it one more time?"
 NUMBER_HEDGE = "Let me get you an exact number on that."
 TRY_AGAIN = "Sorry about that. What would you like to do next?"
+WHICH_WORKS = "Which of those works for you?"
+ANYTHING_ELSE = "Is there anything else I can help with?"
 GOODBYE = "Thanks for calling. Goodbye."
 ASK_BEST = "Is the number you're calling from the best one to reach you?"
 ASK_DIGITS = "What number should we use? Area code first, please."
@@ -525,6 +527,17 @@ class _Session:
         if name == "book":
             await self._booking_events(call, result)
         self.round_payloads.append((call, result.model))
+        if name == "check_availability":
+            slots = result.model.get("slots")
+            if isinstance(slots, tuple) and slots:
+                await self.speak(WHICH_WORKS, "backend", history="include")
+                return False
+        if name == "book" and isinstance(result, BookResult):
+            if result.model.get("booked") is True:
+                await self.speak(ANYTHING_ELSE, "backend", history="include")
+                return False
+            if result.stop_followup:
+                return False
         return True
 
     async def _run_tool(self, call: ToolCall) -> ToolResult:

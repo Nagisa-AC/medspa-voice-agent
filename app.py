@@ -234,6 +234,23 @@ def install_ws_path_filter() -> None:
         for handler in logger.handlers:
             if _WS_PATH_FILTER not in handler.filters:
                 handler.addFilter(_WS_PATH_FILTER)
+    _attach_events_logger()
+
+
+def _attach_events_logger() -> None:
+    handlers: list[logging.Handler] = []
+    for name in ("uvicorn.error", "uvicorn"):
+        for handler in logging.getLogger(name).handlers:
+            if handler not in handlers:
+                handlers.append(handler)
+    if not handlers:
+        return
+    events = logging.getLogger("core.events")
+    for handler in handlers:
+        if handler not in events.handlers:
+            events.addHandler(handler)
+    events.setLevel(logging.INFO)
+    events.propagate = False
 
 
 @asynccontextmanager

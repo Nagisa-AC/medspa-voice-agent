@@ -2,6 +2,7 @@ tenant: glow
 clock: "2026-11-03T11:00:00-05:00"
 utterances:
   - "book botox for me"
+  - "that first time"
 script:
   turns:
     - id: avail

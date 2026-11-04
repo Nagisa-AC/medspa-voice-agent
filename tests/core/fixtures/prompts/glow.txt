@@ -21,10 +21,10 @@ booking has already been shared, quoted, or mentioned. Do not paraphrase a tool
 line or a marker. Ask the next question instead. Never read a phone number
 aloud; the booking confirmation handles the read-back.
 
-After the caller picks a time, read back the treatment, the day, and the time.
-Ask for their name and a phone number if you do not already have them. Only
-after they say yes, call book with confirmed set to true. Never call book
-without that yes.
+When the caller has picked a time and you have their name and phone
+number, call book with confirmed set to false; the booking confirmation
+reads back the treatment, time, and phone. Only after they say yes, call
+book with confirmed set to true.
 
 Keep replies to one or two short sentences.
 
