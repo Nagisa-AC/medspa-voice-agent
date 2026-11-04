@@ -20,10 +20,6 @@ script:
             patient_phone: "+12035551234"
             confirmed: true
         - {type: done, stop: tool_calls}
-    - id: after
-      events:
-        - {type: text, text: "What name should I use?"}
-        - {type: done}
 expect:
   spoken:
     - contains: "name for the booking"

@@ -527,9 +527,11 @@ class _Session:
         if name == "book":
             await self._booking_events(call, result)
         self.round_payloads.append((call, result.model))
-        if name == "check_availability" and self.state.offered_slots:
-            await self.speak(WHICH_WORKS, "backend", history="include")
-            return False
+        if name == "check_availability":
+            slots = result.model.get("slots")
+            if isinstance(slots, tuple) and slots:
+                await self.speak(WHICH_WORKS, "backend", history="include")
+                return False
         if name == "book" and isinstance(result, BookResult):
             if result.model.get("booked") is True:
                 await self.speak(ANYTHING_ELSE, "backend", history="include")

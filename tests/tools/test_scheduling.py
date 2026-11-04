@@ -561,6 +561,8 @@ async def test_book_refuses_blank_name() -> None:
     result = await book_it(state, adapter, iso, name="  ")
     assert result.say == "I need a name for the booking."
     assert adapter._bookings == {}
+    assert result.stop_followup is True
+    assert state.pending_book_phone is None
 
 
 async def test_book_reasks_short_phone() -> None:
@@ -572,6 +574,8 @@ async def test_book_reasks_short_phone() -> None:
     assert result.model["booked"] is False
     assert adapter._bookings == {}
     assert state.offered_slots == offered
+    assert result.stop_followup is True
+    assert state.pending_book_phone is None
 
 
 @pytest.mark.parametrize("phone", ["(203) 555-1234", "203.555.1234", "1 203 555 1234", PHONE])
@@ -839,6 +843,32 @@ async def test_book_confirm_without_reachable_phone_asks_again() -> None:
     result = await book_it(state, adapter, iso, phone="555-1234", confirmed=False)
     assert result.say == "Can I get a good number to reach you at?"
     assert result.model["booked"] is False
+    assert result.stop_followup is True
+    assert state.pending_book_phone is None
+    assert adapter._bookings == {}
+
+
+async def test_book_confirm_blank_name_asks_before_phone() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    result = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name="  ",
+        patient_phone="555-1234",
+        confirmed=False,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert result.say == "I need a name for the booking."
+    assert result.model["booked"] is False
+    assert result.stop_followup is True
+    assert state.pending_book_slot is None
+    assert state.pending_book_phone is None
+    assert adapter._bookings == {}
 
 
 async def test_book_true_without_prior_confirm_speaks_confirm() -> None:

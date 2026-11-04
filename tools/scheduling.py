@@ -332,7 +332,7 @@ async def book(
         raise ValueError("secret must be at least 32 bytes")
     hits = _matching_offers(state, slot_start_iso, tenant.tz)
     if confirmed is not True:
-        return _confirm_booking(state, tenant, hits, patient_phone, extract)
+        return _confirm_booking(state, tenant, hits, patient_name, patient_phone, extract)
     name = patient_name.strip()
     if not name:
         _clear_pending(state)
@@ -342,6 +342,7 @@ async def book(
             _flags(booked=False, needs_review=False, retry=False),
             extract,
             service_id=hits[0].service_id if len(hits) == 1 else None,
+            stop_followup=True,
         )
     phone = normalize_phone(patient_phone)
     if phone is None:
@@ -352,11 +353,12 @@ async def book(
             _flags(booked=False, needs_review=False, retry=False),
             extract,
             service_id=hits[0].service_id if len(hits) == 1 else None,
+            stop_followup=True,
         )
     canonical = _canonical_local_iso(slot_start_iso, tenant.tz)
     if not _pending_matches(state, canonical, phone):
         if len(hits) == 1:
-            return _confirm_booking(state, tenant, hits, patient_phone, extract)
+            return _confirm_booking(state, tenant, hits, patient_name, patient_phone, extract)
         _clear_pending(state)
     if len(hits) != 1:
         _clear_pending(state)
@@ -449,9 +451,20 @@ def _confirm_booking(
     state: CallState,
     tenant: Tenant,
     hits: list[OfferedSlot],
+    patient_name: str,
     patient_phone: str,
     extract: NumberExtractor,
 ) -> BookResult:
+    if not patient_name.strip():
+        _clear_pending(state)
+        return _finish(
+            state,
+            NEED_NAME,
+            _flags(booked=False, needs_review=False, retry=False),
+            extract,
+            service_id=hits[0].service_id if len(hits) == 1 else None,
+            stop_followup=True,
+        )
     phone = normalize_phone(patient_phone)
     if phone is None:
         _clear_pending(state)
@@ -461,6 +474,7 @@ def _confirm_booking(
             _flags(booked=False, needs_review=False, retry=False),
             extract,
             service_id=hits[0].service_id if len(hits) == 1 else None,
+            stop_followup=True,
         )
     spoken = speak_phone(phone)
     if len(hits) == 1:

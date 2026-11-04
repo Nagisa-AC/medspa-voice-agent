@@ -710,6 +710,104 @@ async def test_book_true_without_pending_confirm_does_not_book() -> None:
     assert "booking_confirmed" not in await kinds(log)
 
 
+async def test_ambiguous_availability_after_listing_does_not_speak_which_works() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("unused", "x")))
+    listed = await check_availability(
+        GLOW,
+        state,
+        loop.adapter,
+        "botox",
+        earliest_iso=None,
+        extract=EXTRACT,
+        now=TUE,
+        limit=1,
+    )
+    assert listed.model.get("slots")
+    assert state.offered_slots
+    loop.model = _scripted(
+        _tool("b", "check_availability", {"service_text": "botox and filler"}, call_id="c2"),
+        _text("follow", "Which treatment?"),
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "botox and filler"))
+    spoken = [chunk.text for chunk in chunks]
+    assert any(text.startswith("Which were you asking about") for text in spoken)
+    assert WHICH_WORKS not in spoken
+    assert "Which treatment?" in spoken
+    assert _calls(loop) == 2
+
+
+async def test_book_need_name_ends_turn_without_model_followup() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("unused", "x")))
+    listed = await check_availability(
+        GLOW,
+        state,
+        loop.adapter,
+        "botox",
+        earliest_iso=None,
+        extract=EXTRACT,
+        now=TUE,
+        limit=1,
+    )
+    slots = listed.model["slots"]
+    assert isinstance(slots, tuple) and slots
+    iso = slots[0]["start"]
+    assert isinstance(iso, str)
+    loop.model = _scripted(
+        _tool(
+            "b",
+            "book",
+            {
+                "slot_start_iso": iso,
+                "patient_name": "",
+                "patient_phone": "+12035551234",
+                "confirmed": False,
+            },
+        ),
+        _text("follow", "What name should I use?"),
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "the first one"))
+    spoken = [chunk.text for chunk in chunks]
+    assert spoken[-1] == "I need a name for the booking."
+    assert _calls(loop) == 1
+    assert "What name should I use?" not in spoken
+
+
+async def test_book_need_phone_ends_turn_without_model_followup() -> None:
+    loop, state, _log, _store = await setup(model=_scripted(_text("unused", "x")))
+    listed = await check_availability(
+        GLOW,
+        state,
+        loop.adapter,
+        "botox",
+        earliest_iso=None,
+        extract=EXTRACT,
+        now=TUE,
+        limit=1,
+    )
+    slots = listed.model["slots"]
+    assert isinstance(slots, tuple) and slots
+    iso = slots[0]["start"]
+    assert isinstance(iso, str)
+    loop.model = _scripted(
+        _tool(
+            "b",
+            "book",
+            {
+                "slot_start_iso": iso,
+                "patient_name": "Dana Reyes",
+                "patient_phone": "555-1234",
+                "confirmed": False,
+            },
+        ),
+        _text("follow", "What number should I use?"),
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "the first one"))
+    spoken = [chunk.text for chunk in chunks]
+    assert spoken[-1] == "Can I get a good number to reach you at?"
+    assert _calls(loop) == 1
+    assert "What number should I use?" not in spoken
+
+
 async def test_availability_does_not_consume_scripted_followup() -> None:
     model = _scripted(
         _tool("a", "check_availability", {"service_text": "botox"}),
