@@ -22,10 +22,6 @@ script:
       events:
         - {type: tool_call, id: c2, name: check_availability, args: {service_text: lip filler}}
         - {type: done, stop: tool_calls}
-    - id: after_avail
-      events:
-        - {type: text, text: "Which of those works?"}
-        - {type: done}
     - id: confirm
       expect:
         messages_must_not_contain: ["$700", "$950"]
@@ -39,10 +35,6 @@ script:
             patient_phone: "+12035551234"
             confirmed: false
         - {type: done, stop: tool_calls}
-    - id: after_confirm
-      events:
-        - {type: text, text: "Take your time."}
-        - {type: done}
     - id: thanks
       events:
         - {type: text, text: "Thanks, Dana."}
@@ -58,16 +50,14 @@ script:
             patient_phone: "+12035551234"
             confirmed: true
         - {type: done, stop: tool_calls}
-    - id: bye
-      events:
-        - {type: text, text: "Thanks for calling. Goodbye."}
-        - {type: done}
 expect:
   spoken:
     - contains: "typically runs"
     - contains: "I have"
+    - contains: "Which of those works for you?"
     - contains: "Just to confirm"
     - contains: "You're all set"
+    - contains: "Is there anything else I can help with?"
   history:
     - {marker: price, label: "Dermal Filler"}
   events:

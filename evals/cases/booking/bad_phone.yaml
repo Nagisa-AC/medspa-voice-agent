@@ -2,6 +2,7 @@ tenant: glow
 clock: "2026-11-03T11:00:00-05:00"
 utterances:
   - "book botox for me"
+  - "that first time"
 script:
   turns:
     - id: avail
@@ -19,6 +20,10 @@ script:
             patient_phone: "123"
             confirmed: true
         - {type: done, stop: tool_calls}
+    - id: after
+      events:
+        - {type: text, text: "What number should I use?"}
+        - {type: done}
 expect:
   spoken:
     - contains: "good number"

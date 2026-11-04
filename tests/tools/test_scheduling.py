@@ -129,6 +129,19 @@ async def book_it(
     now: datetime = FRIDAY_13,
     secret: bytes = SECRET,
 ) -> BookResult:
+    if confirmed is True:
+        await book(
+            GLOW,
+            state,
+            adapter,
+            slot_start_iso=slot_start_iso,
+            patient_name=name,
+            patient_phone=phone,
+            confirmed=False,
+            extract=glow_extract,
+            now=now,
+            secret=secret,
+        )
     return await book(
         GLOW,
         state,
@@ -529,6 +542,8 @@ async def test_book_refuses_without_confirmation() -> None:
     assert result.model["booked"] is False
     assert adapter._bookings == {}
     assert state.offered_slots == offered
+    assert state.pending_book_phone == PHONE
+    assert result.stop_followup is True
     assert_say_passes(state, result.say)
     following = f"I'll use {PHONE_SPOKEN}."
     checked = check_numbers(
@@ -802,6 +817,9 @@ async def test_book_confirm_without_unique_slot() -> None:
     assert result.model["booked"] is False
     assert adapter._bookings == {}
     assert state.offered_slots == offered
+    assert state.pending_book_slot is None
+    assert state.pending_book_phone is None
+    assert result.stop_followup is True
     assert_say_passes(state, result.say)
 
 
@@ -821,3 +839,170 @@ async def test_book_confirm_without_reachable_phone_asks_again() -> None:
     result = await book_it(state, adapter, iso, phone="555-1234", confirmed=False)
     assert result.say == "Can I get a good number to reach you at?"
     assert result.model["booked"] is False
+
+
+async def test_book_true_without_prior_confirm_speaks_confirm() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    result = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=True,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert result.say.startswith("Just to confirm: Botox")
+    assert PHONE_SPOKEN in result.say
+    assert result.say.endswith("Should I go ahead and book that?")
+    assert result.model["booked"] is False
+    assert adapter._bookings == {}
+    assert state.pending_book_phone == PHONE
+    assert result.stop_followup is True
+
+
+async def test_book_confirm_then_true_books() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    first = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=False,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert first.model["booked"] is False
+    second = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=True,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert second.model["booked"] is True
+    assert second.say.startswith("You're all set")
+    assert state.pending_book_phone is None
+    assert adapter._bookings
+
+
+async def test_book_true_with_different_phone_reconfirms() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=False,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    other = "+12035559999"
+    result = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone=other,
+        confirmed=True,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert result.model["booked"] is False
+    assert speak_phone(other) in result.say
+    assert PHONE_SPOKEN not in result.say
+    assert adapter._bookings == {}
+    assert state.pending_book_phone == other
+
+
+async def test_book_true_with_different_slot_reconfirms() -> None:
+    listed, state, adapter = await seed("botox")
+    first_iso = slot_iso(listed, 0)
+    second_iso = slot_iso(listed, 1)
+    await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=first_iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=False,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    result = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=second_iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=True,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert result.model["booked"] is False
+    assert result.say.startswith("Just to confirm: Botox")
+    assert result.say.endswith("Should I go ahead and book that?")
+    assert adapter._bookings == {}
+    assert state.pending_book_slot == second_iso
+    assert state.pending_book_phone == PHONE
+    assert result.stop_followup is True
+
+
+async def test_book_need_phone_then_true_reconfirms() -> None:
+    listed, state, adapter = await seed("botox")
+    iso = slot_iso(listed)
+    first = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone="555-1234",
+        confirmed=False,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert first.say == "Can I get a good number to reach you at?"
+    assert state.pending_book_phone is None
+    second = await book(
+        GLOW,
+        state,
+        adapter,
+        slot_start_iso=iso,
+        patient_name=NAME,
+        patient_phone=PHONE,
+        confirmed=True,
+        extract=glow_extract,
+        now=FRIDAY_13,
+        secret=SECRET,
+    )
+    assert second.model["booked"] is False
+    assert second.say.startswith("Just to confirm: Botox")
+    assert PHONE_SPOKEN in second.say
+    assert adapter._bookings == {}
+    assert state.pending_book_phone == PHONE
+    assert second.stop_followup is True

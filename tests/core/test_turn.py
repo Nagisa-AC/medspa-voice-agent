@@ -39,8 +39,9 @@ from core.state import (
     Transfer,
     new_call_state,
 )
-from core.tenant import extra_price_words, load_tenant_file
+from core.tenant import LiveHours, extra_price_words, load_tenant_file
 from core.turn import (
+    ANYTHING_ELSE,
     ASK_BEST,
     ASK_DIGITS,
     GIVE_UP,
@@ -48,10 +49,11 @@ from core.turn import (
     HEDGE,
     NUMBER_HEDGE,
     TRY_AGAIN,
+    WHICH_WORKS,
     OutputChunk,
     TurnLoop,
 )
-from integrations.booking import MockBookingAdapter
+from integrations.booking import MockBookingAdapter, MockSchedule, Provider, Room
 from tools.scheduling import check_availability
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +105,11 @@ def _scripted(*turns: CannedTurn, mono: FakeMono | None = None) -> ScriptedLLM:
     if mono is None:
         return ScriptedLLM(turns)
     return ScriptedLLM(turns, sleep=mono.sleep, clock=mono)
+
+
+def _calls(loop: TurnLoop) -> int:
+    assert isinstance(loop.model, ScriptedLLM)
+    return loop.model.call_count
 
 
 class RecordingLLM:
@@ -424,6 +431,7 @@ async def test_quote_price_say_direct_before_follow_up() -> None:
     texts = [chunk.text for chunk in chunks]
     assert texts[0] == FILLER_SAY
     assert texts[1] == "Want me to look at times?"
+    assert _calls(loop) == 2
     assert any(
         isinstance(line, AgentLine)
         and line.history == "marker"
@@ -514,14 +522,13 @@ async def test_lookup_faq_hit_is_marker_and_logged() -> None:
 
 
 async def test_check_availability_say_is_included() -> None:
-    model = _scripted(
-        _tool("a", "check_availability", {"service_text": "botox"}),
-        _text("follow", "Which of those works?"),
-    )
+    model = _scripted(_tool("a", "check_availability", {"service_text": "botox"}))
     loop, state, _log, _store = await setup(model=model)
     chunks = await collect(loop.handle_caller_turn(state, "when can I come in for botox"))
     spoken = [chunk.text for chunk in chunks]
     assert any(text.startswith("I have ") for text in spoken)
+    assert WHICH_WORKS in spoken
+    assert _calls(loop) == 1
     assert any(
         isinstance(line, AgentLine)
         and line.history == "include"
@@ -531,12 +538,12 @@ async def test_check_availability_say_is_included() -> None:
     built = build(GLOW, state, now=TUE)
     history = "\n".join(m.content for m in built.messages if m.role != "system")
     assert "I have " in history
+    assert WHICH_WORKS in history
 
 
 async def test_availability_tool_pair_precedes_say_on_next_turn() -> None:
     model = _scripted(
         _tool("a", "check_availability", {"service_text": "botox"}, call_id="c2"),
-        _text("follow", "Which of those works?"),
         _text("next", "Happy to help."),
     )
     loop, state, _log, _store = await setup(model=model)
@@ -579,6 +586,20 @@ async def test_book_say_is_omitted_and_logged() -> None:
     assert isinstance(slots, tuple) and slots
     iso = slots[0]["start"]
     assert isinstance(iso, str)
+    from tools.scheduling import book as book_tool
+
+    await book_tool(
+        GLOW,
+        state,
+        loop.adapter,
+        slot_start_iso=iso,
+        patient_name="Dana Reyes",
+        patient_phone="+12035551234",
+        confirmed=False,
+        extract=EXTRACT,
+        now=TUE,
+        secret=SECRET,
+    )
     loop.model = _scripted(
         _tool(
             "b",
@@ -589,12 +610,13 @@ async def test_book_say_is_omitted_and_logged() -> None:
                 "patient_phone": "+12035551234",
                 "confirmed": True,
             },
-        ),
-        _text("follow", "See you then."),
+        )
     )
     chunks = await collect(loop.handle_caller_turn(state, "yes book that time please"))
     spoken = [chunk.text for chunk in chunks]
     assert any(text.startswith("You're all set") for text in spoken)
+    assert ANYTHING_ELSE in spoken
+    assert _calls(loop) == 1
     assert any(
         isinstance(line, AgentLine)
         and line.history == "omit"
@@ -608,6 +630,120 @@ async def test_book_say_is_omitted_and_logged() -> None:
     kind_list = await kinds(log)
     assert "booking_attempted" in kind_list
     assert "booking_confirmed" in kind_list
+
+
+async def test_book_confirm_ends_turn_without_model_followup() -> None:
+    loop, state, log, _store = await setup(model=_scripted(_text("unused", "x")))
+    listed = await check_availability(
+        GLOW,
+        state,
+        loop.adapter,
+        "botox",
+        earliest_iso=None,
+        extract=EXTRACT,
+        now=TUE,
+        limit=1,
+    )
+    slots = listed.model["slots"]
+    assert isinstance(slots, tuple) and slots
+    iso = slots[0]["start"]
+    assert isinstance(iso, str)
+    loop.model = _scripted(
+        _tool(
+            "b",
+            "book",
+            {
+                "slot_start_iso": iso,
+                "patient_name": "Dana Reyes",
+                "patient_phone": "+12035551234",
+                "confirmed": False,
+            },
+        ),
+        _text("follow", "Take your time."),
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "the first one"))
+    spoken = [chunk.text for chunk in chunks]
+    assert spoken
+    assert spoken[-1].endswith("Should I go ahead and book that?")
+    assert _calls(loop) == 1
+    assert "Take your time." not in spoken
+    assert "booking_attempted" in await kinds(log)
+    assert "booking_confirmed" not in await kinds(log)
+
+
+async def test_book_true_without_pending_confirm_does_not_book() -> None:
+    loop, state, log, _store = await setup(model=_scripted(_text("unused", "x")))
+    listed = await check_availability(
+        GLOW,
+        state,
+        loop.adapter,
+        "botox",
+        earliest_iso=None,
+        extract=EXTRACT,
+        now=TUE,
+        limit=1,
+    )
+    slots = listed.model["slots"]
+    assert isinstance(slots, tuple) and slots
+    iso = slots[0]["start"]
+    assert isinstance(iso, str)
+    loop.model = _scripted(
+        _tool(
+            "b",
+            "book",
+            {
+                "slot_start_iso": iso,
+                "patient_name": "Dana Reyes",
+                "patient_phone": "+12035551234",
+                "confirmed": True,
+            },
+        )
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "yes book that time please"))
+    spoken = [chunk.text for chunk in chunks]
+    joined = " ".join(spoken)
+    assert "Just to confirm" in joined
+    assert "two zero three" in joined
+    assert spoken[-1].endswith("Should I go ahead and book that?")
+    assert _calls(loop) == 1
+    assert "You're all set" not in joined
+    assert "booking_confirmed" not in await kinds(log)
+
+
+async def test_availability_does_not_consume_scripted_followup() -> None:
+    model = _scripted(
+        _tool("a", "check_availability", {"service_text": "botox"}),
+        _text("follow", "LEFTOVER FOLLOWUP"),
+    )
+    loop, state, _log, _store = await setup(model=model)
+    chunks = await collect(loop.handle_caller_turn(state, "when can I come in for botox"))
+    spoken = [chunk.text for chunk in chunks]
+    assert _calls(loop) == 1
+    assert WHICH_WORKS in spoken
+    assert "LEFTOVER FOLLOWUP" not in spoken
+
+
+async def test_empty_availability_still_requests_followup() -> None:
+    model = _scripted(
+        _tool("a", "check_availability", {"service_text": "botox"}),
+        _text("follow", "Want me to take a message?"),
+    )
+    loop, state, _log, _store = await setup(model=model)
+    loop.adapter = MockBookingAdapter(
+        MockSchedule(
+            providers=(Provider(id="np_1", types=frozenset({"NP", "RN"})),),
+            rooms=(Room(id="inject_1", types=frozenset({"injectable"})),),
+            hours=LiveHours.parse("Mon 09:00-09:15"),
+        ),
+        tz=GLOW.tz,
+        clock=lambda: TUE,
+    )
+    chunks = await collect(loop.handle_caller_turn(state, "when can I come in for botox"))
+    spoken = [chunk.text for chunk in chunks]
+    assert any("don't have anything" in text for text in spoken)
+    assert "Want me to take a message?" in spoken
+    assert _calls(loop) == 2
+    assert WHICH_WORKS not in spoken
 
 
 async def test_three_tool_rounds_then_hedge() -> None:

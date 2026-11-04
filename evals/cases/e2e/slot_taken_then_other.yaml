@@ -3,21 +3,30 @@ clock: "2026-11-03T11:00:00-05:00"
 utterances:
   - "what times do you have for botox"
   - "the first one"
+  - "yes"
   - "the first one"
+  - "yes"
 script:
   turns:
     - id: avail
       events:
         - {type: tool_call, id: c1, name: check_availability, args: {service_text: botox}}
         - {type: done, stop: tool_calls}
-    - id: after_avail
-      events:
-        - {type: text, text: "Which of those works?"}
-        - {type: done}
-    - id: first
+    - id: confirm
       events:
         - type: tool_call
           id: c2
+          name: book
+          args:
+            slot_start_iso: $first_offered
+            patient_name: Dana Reyes
+            patient_phone: "+12035551234"
+            confirmed: false
+        - {type: done, stop: tool_calls}
+    - id: first
+      events:
+        - type: tool_call
+          id: c3
           name: book
           args:
             slot_start_iso: $first_offered
@@ -29,10 +38,21 @@ script:
       events:
         - {type: text, text: "Which of those works?"}
         - {type: done}
+    - id: retry_confirm
+      events:
+        - type: tool_call
+          id: c4
+          name: book
+          args:
+            slot_start_iso: $first_offered
+            patient_name: Dana Reyes
+            patient_phone: "+12035551234"
+            confirmed: false
+        - {type: done, stop: tool_calls}
     - id: retry
       events:
         - type: tool_call
-          id: c3
+          id: c5
           name: book
           args:
             slot_start_iso: $first_offered
@@ -40,10 +60,6 @@ script:
             patient_phone: "+12035551234"
             confirmed: true
         - {type: done, stop: tool_calls}
-    - id: bye
-      events:
-        - {type: text, text: "See you then."}
-        - {type: done}
 hooks:
   after: 1
   occupy_first: true
@@ -52,6 +68,7 @@ expect:
     - contains: "I have"
     - contains: "just taken"
     - contains: "You're all set"
+    - contains: "Is there anything else I can help with?"
   events:
     present: [booking_attempted, booking_confirmed]
     absent: [sms_logged]

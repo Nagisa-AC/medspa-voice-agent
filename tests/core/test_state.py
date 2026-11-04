@@ -109,6 +109,8 @@ def test_new_state_starts_empty_except_seeded_numbers() -> None:
     assert s.callback_phase == "idle"
     assert s.callback_digit_failures == 0
     assert s.consecutive_blocks == 0
+    assert s.pending_book_slot is None
+    assert s.pending_book_phone is None
     assert s.escalation == NotEscalated()
     assert s.pending_transfer_number is None
 
@@ -413,6 +415,8 @@ FIELDS = {
     "callback_digit_failures",
     "reminder_count",
     "consecutive_blocks",
+    "pending_book_slot",
+    "pending_book_phone",
     "idempotency_keys",
     "version",
 }

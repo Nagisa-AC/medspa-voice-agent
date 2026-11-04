@@ -75,6 +75,7 @@ class BookResult:
     model: Mapping[str, object]
     booking_id: str | None = None
     service_id: str | None = None
+    stop_followup: bool = False
 
     def __repr__(self) -> str:
         return (
@@ -331,33 +332,10 @@ async def book(
         raise ValueError("secret must be at least 32 bytes")
     hits = _matching_offers(state, slot_start_iso, tenant.tz)
     if confirmed is not True:
-        phone = normalize_phone(patient_phone)
-        if phone is None:
-            return _finish(
-                state,
-                NEED_PHONE,
-                _flags(booked=False, needs_review=False, retry=False),
-                extract,
-                service_id=hits[0].service_id if len(hits) == 1 else None,
-            )
-        spoken = speak_phone(phone)
-        if len(hits) == 1:
-            say = CONFIRM.format(
-                what=_spoken_what(tenant, hits[0].service_id),
-                time=format_slot_time(hits[0].start, tenant.tz),
-                phone_spoken=spoken,
-            )
-        else:
-            say = CONFIRM_BARE.format(phone_spoken=spoken)
-        return _finish(
-            state,
-            say,
-            _flags(booked=False, needs_review=False, retry=False),
-            extract,
-            service_id=hits[0].service_id if len(hits) == 1 else None,
-        )
+        return _confirm_booking(state, tenant, hits, patient_phone, extract)
     name = patient_name.strip()
     if not name:
+        _clear_pending(state)
         return _finish(
             state,
             NEED_NAME,
@@ -367,6 +345,7 @@ async def book(
         )
     phone = normalize_phone(patient_phone)
     if phone is None:
+        _clear_pending(state)
         return _finish(
             state,
             NEED_PHONE,
@@ -374,7 +353,13 @@ async def book(
             extract,
             service_id=hits[0].service_id if len(hits) == 1 else None,
         )
+    canonical = _canonical_local_iso(slot_start_iso, tenant.tz)
+    if not _pending_matches(state, canonical, phone):
+        if len(hits) == 1:
+            return _confirm_booking(state, tenant, hits, patient_phone, extract)
+        _clear_pending(state)
     if len(hits) != 1:
+        _clear_pending(state)
         if not state.offered_slots:
             return _finish(
                 state, NO_OFFER, _flags(booked=False, needs_review=False, retry=True), extract
@@ -389,6 +374,7 @@ async def book(
             service_id=state.offered_slots[0].service_id,
         )
     offered = hits[0]
+    _clear_pending(state)
     slot = Slot(
         start=offered.start,
         end=offered.end,
@@ -459,6 +445,65 @@ async def book(
     )
 
 
+def _confirm_booking(
+    state: CallState,
+    tenant: Tenant,
+    hits: list[OfferedSlot],
+    patient_phone: str,
+    extract: NumberExtractor,
+) -> BookResult:
+    phone = normalize_phone(patient_phone)
+    if phone is None:
+        _clear_pending(state)
+        return _finish(
+            state,
+            NEED_PHONE,
+            _flags(booked=False, needs_review=False, retry=False),
+            extract,
+            service_id=hits[0].service_id if len(hits) == 1 else None,
+        )
+    spoken = speak_phone(phone)
+    if len(hits) == 1:
+        offered = hits[0]
+        _set_pending(state, _local_naive_iso(offered.start, tenant.tz), phone)
+        say = CONFIRM.format(
+            what=_spoken_what(tenant, offered.service_id),
+            time=format_slot_time(offered.start, tenant.tz),
+            phone_spoken=spoken,
+        )
+        service_id = offered.service_id
+    else:
+        _clear_pending(state)
+        say = CONFIRM_BARE.format(phone_spoken=spoken)
+        service_id = None
+    return _finish(
+        state,
+        say,
+        _flags(booked=False, needs_review=False, retry=False),
+        extract,
+        service_id=service_id,
+        stop_followup=True,
+    )
+
+
+def _pending_matches(state: CallState, slot_iso: str | None, phone: str) -> bool:
+    return (
+        slot_iso is not None
+        and state.pending_book_slot == slot_iso
+        and state.pending_book_phone == phone
+    )
+
+
+def _set_pending(state: CallState, slot_iso: str, phone: str) -> None:
+    state.pending_book_slot = slot_iso
+    state.pending_book_phone = phone
+
+
+def _clear_pending(state: CallState) -> None:
+    state.pending_book_slot = None
+    state.pending_book_phone = None
+
+
 def _finish(
     state: CallState,
     say: str,
@@ -467,9 +512,16 @@ def _finish(
     *,
     booking_id: str | None = None,
     service_id: str | None = None,
+    stop_followup: bool = False,
 ) -> BookResult:
     admit_numbers(state, say, extract)
-    return BookResult(say=say, model=model, booking_id=booking_id, service_id=service_id)
+    return BookResult(
+        say=say,
+        model=model,
+        booking_id=booking_id,
+        service_id=service_id,
+        stop_followup=stop_followup,
+    )
 
 
 def _flags(*, booked: bool, needs_review: bool, retry: bool) -> Mapping[str, object]:

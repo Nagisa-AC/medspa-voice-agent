@@ -9,10 +9,6 @@ script:
       events:
         - {type: tool_call, id: c1, name: check_availability, args: {service_text: lip filler}}
         - {type: done, stop: tool_calls}
-    - id: after_avail
-      events:
-        - {type: text, text: "Which of those works?"}
-        - {type: done}
     - id: unused
       events:
         - {type: text, text: "nope"}
@@ -20,6 +16,7 @@ script:
 expect:
   spoken:
     - contains: "I have"
+    - contains: "Which of those works for you?"
     - contains: "connect you"
   committed:
     trip: clinical_question

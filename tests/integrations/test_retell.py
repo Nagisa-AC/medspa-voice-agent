@@ -763,6 +763,7 @@ def test_privacy_logs_ids_not_utterance_or_token(caplog: pytest.LogCaptureFixtur
             ),
         )
     text = caplog.text
+    assert "ws_open" in text
     assert CALL in text
     assert TOKEN not in text
     assert EMERGENCY not in text

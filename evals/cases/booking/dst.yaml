@@ -9,10 +9,6 @@ script:
       events:
         - {type: tool_call, id: c1, name: check_availability, args: {service_text: botox}}
         - {type: done, stop: tool_calls}
-    - id: follow
-      events:
-        - {type: text, text: "Which of those works?"}
-        - {type: done}
     - id: book
       events:
         - type: tool_call
