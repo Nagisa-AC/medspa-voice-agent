@@ -410,6 +410,7 @@ FIELDS = {
     "caller_number_confirmed",
     "callback_phase",
     "callback_digit_failures",
+    "reminder_count",
     "idempotency_keys",
     "version",
 }
