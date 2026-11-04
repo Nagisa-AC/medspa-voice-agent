@@ -6,10 +6,12 @@ only its replacement is.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
+from decimal import Decimal
 from typing import Final, Literal
 
 from core.escalation import EMERGENCY_LINE, TRANSFER_LINE, EscalationPlan, plan
@@ -150,6 +152,7 @@ class TurnLoop:
     async def connect(self, state: CallState) -> AsyncIterator[OutputChunk]:
         session = _Session(self, state)
         await session.speak(self.tenant.greeting, "backend", history="include")
+        await session.speak(self.tenant.record_disclosure, "backend", history="include")
         await session.save()
         async for chunk in session.flush():
             yield chunk
@@ -158,8 +161,12 @@ class TurnLoop:
         self, state: CallState, utterance: str
     ) -> AsyncIterator[OutputChunk]:
         session = _Session(self, state)
+        snap = _snap_turn(state)
         try:
             await session.caller_turn(utterance)
+        except asyncio.CancelledError:
+            _restore_turn(state, snap)
+            raise
         except Exception:
             await record_error(
                 self.log,
@@ -171,6 +178,27 @@ class TurnLoop:
             )
             await session.speak(HEDGE, "backend", history="include")
         await session.save()
+        async for chunk in session.flush():
+            yield chunk
+
+    async def handle_reminder(self, state: CallState) -> AsyncIterator[OutputChunk]:
+        session = _Session(self, state)
+        state.reminder_count += 1
+        if state.reminder_count > 2:
+            await session.speak(GOODBYE, "backend", history="include")
+            await session._end("reminder")
+        else:
+            await session.speak(self.tenant.reminder_line, "backend", history="include")
+        await session.save()
+        async for chunk in session.flush():
+            yield chunk
+
+    async def handle_consumed_response(
+        self, state: CallState, utterance: str
+    ) -> AsyncIterator[OutputChunk]:
+        """Skip record and gate; speech already went out on the mid-turn path."""
+        del utterance
+        session = _Session(self, state)
         async for chunk in session.flush():
             yield chunk
 
@@ -741,6 +769,32 @@ class _Session:
                 payload={"reason": reason},
             )
         )
+
+
+@dataclass(frozen=True)
+class _TurnSnap:
+    transcript: list[CallerLine | AgentLine | ToolExchange]
+    turn_count: int
+    allowed_numbers: set[Decimal]
+    allowed_amounts: set[Decimal]
+
+
+def _snap_turn(state: CallState) -> _TurnSnap:
+    return _TurnSnap(
+        transcript=list(state.transcript),
+        turn_count=state.turn_count,
+        allowed_numbers=set(state.allowed_numbers),
+        allowed_amounts=set(state.allowed_amounts),
+    )
+
+
+def _restore_turn(state: CallState, snap: _TurnSnap) -> None:
+    state.transcript[:] = snap.transcript
+    state.turn_count = snap.turn_count
+    state.allowed_numbers.clear()
+    state.allowed_numbers.update(snap.allowed_numbers)
+    state.allowed_amounts.clear()
+    state.allowed_amounts.update(snap.allowed_amounts)
 
 
 def _is_yes(folded: str) -> bool:

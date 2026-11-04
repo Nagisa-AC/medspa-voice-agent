@@ -5,8 +5,11 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.3.0,<3",
     "cryptography>=50.0.2,<51",
+    "fastapi>=0.115,<1",
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3,<7",
+    "retell-sdk>=6.2.17,<7",
+    "uvicorn[standard]>=0.32,<1",
 ]
 
 [dependency-groups]
@@ -32,7 +35,7 @@ select = ["E", "W", "F", "I", "B", "UP", "DTZ", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["core", "tools", "integrations", "evals", "tests", "demo.py"]
+files = ["core", "tools", "integrations", "evals", "tests", "demo.py", "app.py"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]

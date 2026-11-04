@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from collections.abc import AsyncIterator, Sequence
 from datetime import date, datetime, timedelta
@@ -29,7 +30,7 @@ from core.llm import (
 from core.numbers import find_numbers
 from core.policy import load_policy_engine
 from core.prompt import build
-from core.state import AgentLine, InMemorySessionStore, ToolExchange, new_call_state
+from core.state import AgentLine, CallerLine, InMemorySessionStore, ToolExchange, new_call_state
 from core.tenant import extra_price_words, load_tenant_file
 from core.turn import (
     ASK_BEST,
@@ -188,13 +189,43 @@ async def test_connect_speaks_greeting_included() -> None:
     model = _scripted(_text("unused", "nope"))
     loop, state, _log, _store = await setup(model=model)
     chunks = await collect(loop.connect(state))
-    assert [chunk.text for chunk in chunks] == [GLOW.greeting]
+    assert [chunk.text for chunk in chunks] == [GLOW.greeting, GLOW.record_disclosure]
     assert chunks[0].origin == "backend"
+    assert chunks[1].origin == "backend"
     assert chunks[-1].content_complete is True
     assert state.turn_count == 0
     line = state.transcript[0]
     assert isinstance(line, AgentLine)
     assert line.history == "include"
+    model.assert_never_called()
+
+
+async def test_cancelled_caller_turn_restores_transcript() -> None:
+    model = ScriptedLLM([CannedTurn(id="slow", delay_s=2, events=(CannedText("hi"), CannedDone()))])
+    loop, state, _log, _store = await setup(model=model)
+    loop.first_token_timeout = 5
+    loop.idle_timeout = 5
+    task = asyncio.create_task(collect(loop.handle_caller_turn(state, "hello there friend")))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert state.turn_count == 0
+    assert not any(isinstance(line, CallerLine) for line in state.transcript)
+
+
+async def test_reminder_speaks_line_then_goodbye() -> None:
+    model = _scripted(_text("unused", "nope"))
+    loop, state, _log, _store = await setup(model=model)
+    first = await collect(loop.handle_reminder(state))
+    assert [chunk.text for chunk in first] == [GLOW.reminder_line]
+    assert first[-1].end_call is False
+    second = await collect(loop.handle_reminder(state))
+    assert [chunk.text for chunk in second] == [GLOW.reminder_line]
+    third = await collect(loop.handle_reminder(state))
+    assert GOODBYE in [chunk.text for chunk in third]
+    assert third[-1].end_call is True
+    assert state.reminder_count == 3
     model.assert_never_called()
 
 
