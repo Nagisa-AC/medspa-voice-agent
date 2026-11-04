@@ -226,10 +226,14 @@ def _redact_ws_path(value: object) -> object:
 
 
 def install_ws_path_filter() -> None:
+    """Attach to named loggers and to their handlers. Idempotent."""
     for name in _WS_LOGGERS:
         logger = logging.getLogger(name)
         if _WS_PATH_FILTER not in logger.filters:
             logger.addFilter(_WS_PATH_FILTER)
+        for handler in logger.handlers:
+            if _WS_PATH_FILTER not in handler.filters:
+                handler.addFilter(_WS_PATH_FILTER)
 
 
 @asynccontextmanager

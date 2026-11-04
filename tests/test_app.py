@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import io
 import logging
 import os
 import socket
@@ -130,6 +131,29 @@ def test_ws_path_filter_redacts_token_in_record_args() -> None:
     assert TOKEN not in message
     assert "/llm-websocket/<redacted>" in message
     assert "[accepted]" in message
+
+
+def test_child_logger_record_is_redacted_on_root_handler() -> None:
+    path = f"/llm-websocket/{TOKEN}/glow_aesthetics/{CALL}"
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.DEBUG)
+    root = logging.getLogger()
+    child = logging.getLogger("websockets.server")
+    previous_level = child.level
+    root.addHandler(handler)
+    try:
+        install_ws_path_filter()
+        child.setLevel(logging.WARNING)
+        child.warning("x %s", path)
+        out = stream.getvalue()
+        assert TOKEN not in out
+        assert "/llm-websocket/<redacted>" in out
+        assert "x " in out
+    finally:
+        root.removeHandler(handler)
+        child.setLevel(previous_level)
+        handler.close()
 
 
 def _free_port() -> int:
