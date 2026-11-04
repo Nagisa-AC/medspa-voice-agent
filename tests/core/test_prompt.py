@@ -103,6 +103,9 @@ def test_glow_system_has_names_and_seeded_policy_not_prices() -> None:
     folded = " ".join(system.split())
     assert EXCEPTION in folded
     assert "Never repeat, summarize, or comment on a line a tool just spoke." in folded
+    assert "Never say that a price, an FAQ answer, or a booking has already been shared" in folded
+    assert "Never read a phone number aloud" in folded
+    assert "the booking confirmation handles the read-back." in folded
     assert "Ask the next question instead." in folded
     assert "$50" in system
     for leak in PRICE_LEAKS:

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import re
 import secrets
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -38,6 +41,9 @@ from integrations.retell import (
 )
 
 ROOT = Path(__file__).resolve().parent
+_WS_PATH_RE = re.compile(r"/llm-websocket/\S*")
+_WS_PATH_REDACTED = "/llm-websocket/<redacted>"
+_WS_LOGGERS = ("", "uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
 _ENV_KEYS = frozenset(
     {
         "ANTHROPIC_API_KEY",
@@ -199,10 +205,44 @@ def _build_loop(
     )
 
 
+class _RedactWsPathFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _redact_ws_path(record.msg)
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(_redact_ws_path(arg) for arg in args)
+        elif isinstance(args, Mapping):
+            record.args = {str(key): _redact_ws_path(val) for key, val in args.items()}
+        return True
+
+
+_WS_PATH_FILTER = _RedactWsPathFilter()
+
+
+def _redact_ws_path(value: object) -> object:
+    if isinstance(value, str):
+        return _WS_PATH_RE.sub(_WS_PATH_REDACTED, value)
+    return value
+
+
+def install_ws_path_filter() -> None:
+    for name in _WS_LOGGERS:
+        logger = logging.getLogger(name)
+        if _WS_PATH_FILTER not in logger.filters:
+            logger.addFilter(_WS_PATH_FILTER)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    install_ws_path_filter()
+    yield
+
+
 def create_app(runtime: Runtime | None = None) -> FastAPI:
     if runtime is None:
         runtime = Runtime.from_env()
-    app = FastAPI()
+    install_ws_path_filter()
+    app = FastAPI(lifespan=_lifespan)
     app.state.runtime = runtime
 
     @app.get("/health")

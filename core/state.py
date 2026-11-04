@@ -194,6 +194,7 @@ class CallState:
     callback_phase: Literal["idle", "ask_best", "ask_digits", "done"] = "idle"
     callback_digit_failures: int = 0
     reminder_count: int = 0
+    consecutive_blocks: int = 0
     # Built by `book` from the booking's intent; never derived from call_id, so a
     # callback after a dropped call collapses to the same key.
     idempotency_keys: set[str] = field(default_factory=set)
