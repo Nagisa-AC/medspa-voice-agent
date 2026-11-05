@@ -24,7 +24,7 @@ from integrations.booking import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 10, 29))
+GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 11, 5))
 NY = ZoneInfo("America/New_York")
 THU = date(2026, 10, 29)
 CLOCK = datetime(2026, 10, 29, 8, 0, tzinfo=NY)

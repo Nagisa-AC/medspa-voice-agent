@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import re
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -291,7 +292,12 @@ class CallSession:
             log_ids("ws_event", call_id=self.call_id, interaction_type="call_details")
             return
         if kind == "update_only":
-            log_ids("ws_event", call_id=self.call_id, interaction_type="update_only")
+            log_ids(
+                "ws_event",
+                call_id=self.call_id,
+                interaction_type="update_only",
+                level=logging.DEBUG,
+            )
             await self._on_update(raw)
             return
         if kind in ("response_required", "reminder_required"):

@@ -19,7 +19,7 @@ from core.tenant import (
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = Path(__file__).parent / "fixtures" / "tenants" / "test_spa.yaml"
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
 
 

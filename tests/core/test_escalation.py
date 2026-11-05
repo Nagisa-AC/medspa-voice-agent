@@ -29,7 +29,7 @@ from core.state import (
 from core.tenant import Tenant, TransferTier, load_tenant_file
 
 ROOT = Path(__file__).resolve().parents[2]
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 NY = ZoneInfo("America/New_York")
 CHI = ZoneInfo("America/Chicago")
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)

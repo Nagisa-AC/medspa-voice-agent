@@ -214,10 +214,10 @@ def redact_if_clinical(text: str, *, clinical_class: bool, trip: str | None) -> 
     return f"[redacted:{trip}]"
 
 
-def log_ids(message: str, **ids: str | int) -> None:
+def log_ids(message: str, *, level: int = logging.INFO, **ids: str | int) -> None:
     """Application log: ids and timings only."""
     detail = " ".join(f"{key}={value}" for key, value in ids.items())
-    logger.info("%s %s", message, detail)
+    logger.log(level, "%s %s", message, detail)
 
 
 class EventLogBase(ABC):

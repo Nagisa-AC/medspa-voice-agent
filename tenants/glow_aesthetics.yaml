@@ -62,6 +62,76 @@ faq:                               # owner-approved; spoken verbatim; no model p
     approved_by: "Dr. Jane Doe, NP"
     approved_on: 2026-10-29
 
+  - id: weight_loss_program
+    topics: [weight loss program, glp, glp 1, tell me about weight loss]
+    say: >-
+      Our weight loss program starts with a consultation with one of our
+      providers, who goes over your history and goals and decides whether the
+      program is a good fit. If it is, you'll have regular check-ins with the
+      team along the way.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: consultation
+    topics: [consultation, consult, first visit]
+    say: >-
+      A consultation is a one-on-one visit with a provider to talk through your
+      goals and options. They'll answer your questions and put together a plan
+      with you.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: botox_vs_filler
+    topics: [difference between botox and filler, botox or filler, botox vs filler]
+    say: >-
+      Botox is a wrinkle relaxer, and dermal filler adds volume to areas like
+      the lips and cheeks. A provider can help you decide which one fits your
+      goals at a consultation.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: what_to_bring
+    topics: [what to bring, what should i bring, check in]
+    say: >-
+      Please bring a photo ID and arrive a few minutes early to fill out your
+      intake forms. The team will go over anything else when they confirm your
+      appointment.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: providers
+    topics: [who does the injections, injector, who are the providers]
+    say: >-
+      Treatments are done by our licensed providers. You're welcome to ask for a
+      specific provider when you book.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: payment
+    topics: [payment, credit card, how do i pay]
+    say: >-
+      We accept major credit cards. Some treatments need a deposit when you
+      book, and I'll let you know if yours does.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: reschedule
+    topics: [reschedule, change my appointment, move my appointment]
+    say: >-
+      You can reschedule by calling us back during business hours, and the team
+      will find you a new time. Our cancellation policy still applies to late
+      changes.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
+  - id: gift_cards
+    topics: [gift card, gift certificate]
+    say: >-
+      Yes, we offer gift cards. The front desk can set one up for you during
+      business hours.
+    approved_by: "SYNTHETIC - demo only"
+    approved_on: 2026-11-05
+
 transfer_tiers:
   - {tier: 1, kind: transfer, target: "+12035550101", label: front_desk_direct,
      answers_live: true, live_hours: "Mon-Fri 09:00-18:00, Sat 10:00-16:00"}

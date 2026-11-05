@@ -454,7 +454,7 @@ def test_chicago_timezone_word_is_central() -> None:
 
 
 def test_glow_loads() -> None:
-    registry = TenantRegistry.load(ROOT / "tenants", today=TODAY)
+    registry = TenantRegistry.load(ROOT / "tenants", today=date(2026, 11, 5))
     glow = registry.get("glow_aesthetics")
     assert glow is not None
     assert glow.tz.key == "America/New_York"

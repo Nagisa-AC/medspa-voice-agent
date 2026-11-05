@@ -20,7 +20,7 @@ from tools.faq import LookupFaqResult, lookup_faq
 
 D = Decimal
 ROOT = Path(__file__).resolve().parents[2]
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 NOW = datetime(2026, 10, 29, 14, 0, tzinfo=UTC)
 BASE = Path(__file__).resolve().parents[1] / "core" / "fixtures" / "tenants" / "test_spa.yaml"
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
@@ -164,20 +164,69 @@ def test_two_topics_on_one_entry_still_serves() -> None:
     assert_say_passes(state, result.say, glow_extract)
 
 
-@pytest.mark.parametrize(
-    "question_text",
-    [
-        "how long does botox last",
-        "how long does botox last before it wears off",
-        "something private",
-    ],
-)
+GLOW_FAQ_QUESTIONS = [
+    "how long does botox last",
+    "how long does botox last before it wears off",
+    "something private",
+    "tell me about the GLP program",
+    "what is a consultation",
+    "what's the difference between botox and filler",
+    "what should I bring",
+    "who does the injections",
+    "how do I pay",
+    "can I reschedule",
+    "do you have gift cards",
+]
+GLOW_FAQ_TOPICS = [(entry.id, topic) for entry in GLOW.faq for topic in entry.topics]
+
+
+def test_tox_duration_entry_is_unchanged() -> None:
+    assert TOX.topics == ("botox last", "tox last", "how long botox", "wear off")
+    assert TOX.say == (
+        "Most clients come back every three to four months, and your injector "
+        "will go over what to expect at your visit."
+    )
+    assert TOX.approved_by == "Dr. Jane Doe, NP"
+    assert TOX.approved_on == date(2026, 10, 29)
+
+
+def test_glp_program_serves_weight_loss_program() -> None:
+    state = glow_state()
+    result = ask(GLOW, state, "tell me about the GLP program", glow_extract)
+    assert result.say == next(entry.say for entry in GLOW.faq if entry.id == "weight_loss_program")
+    assert result.model["found"] is True
+    assert result.model["faq_id"] == "weight_loss_program"
+    assert_say_passes(state, result.say, glow_extract)
+
+
+@pytest.mark.parametrize("question_text", GLOW_FAQ_QUESTIONS)
 def test_every_glow_say_passes_number_check(question_text: str) -> None:
     state = glow_state()
     result = ask(GLOW, state, question_text, glow_extract)
     assert_say_passes(state, result.say, glow_extract)
     assert result.model["already_spoken"] is True
     assert "say" not in result.model
+
+
+@pytest.mark.parametrize("question_text", GLOW_FAQ_QUESTIONS)
+def test_every_glow_say_passes_clinical_check(question_text: str) -> None:
+    state = glow_state()
+    result = ask(GLOW, state, question_text, glow_extract)
+    clinical = check_clinical(result.say, PACK)
+    assert isinstance(clinical, Pass)
+
+
+@pytest.mark.parametrize(
+    ("faq_id", "topic"),
+    GLOW_FAQ_TOPICS,
+    ids=[f"{faq_id}:{topic}" for faq_id, topic in GLOW_FAQ_TOPICS],
+)
+def test_every_glow_faq_topic_resolves_to_exactly_one_entry(faq_id: str, topic: str) -> None:
+    state = glow_state()
+    result = ask(GLOW, state, topic, glow_extract)
+    assert result.model["found"] is True
+    assert result.model["faq_id"] == faq_id
+    assert result.say == next(entry.say for entry in GLOW.faq if entry.id == faq_id)
 
 
 def test_fixture_faq_say_is_blocked_by_clinical_check() -> None:

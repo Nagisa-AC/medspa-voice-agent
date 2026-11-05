@@ -258,7 +258,7 @@ def test_translate_system_tools_and_call_started() -> None:
 def test_text_then_tool_exchange_folds_into_one_assistant() -> None:
     glow = load_tenant_file(
         Path(__file__).resolve().parents[2] / "tenants" / "glow_aesthetics.yaml",
-        today=date(2026, 10, 29),
+        today=date(2026, 11, 5),
     )
     now = datetime(2026, 11, 3, 16, 0, tzinfo=UTC)
     state = new_call_state(
