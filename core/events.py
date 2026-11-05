@@ -75,7 +75,15 @@ PAYLOAD_FIELDS: Final[dict[EventKind, frozenset[str]]] = {
         {"patient_name", "patient_phone", "reason", "service_id", "slot_start"}
     ),
     "turn_latency": frozenset(
-        {"response_id", "t_first_chunk_ms", "t_model_first_token_ms", "t_tool_ms", "t_guardrail_ms"}
+        {
+            "response_id",
+            "turn_type",
+            "t_first_chunk_ms",
+            "t_total_ms",
+            "t_model_first_token_ms",
+            "t_tool_ms",
+            "t_guardrail_ms",
+        }
     ),
     "call_ended": frozenset({"reason"}),
     "error": frozenset({"code", "where"}),
@@ -518,6 +526,8 @@ def _check_closed_string(kind: EventKind, field: str, value: ClearValue) -> None
         raise ValueError("origin must be backend or model")
     if field == "path" and value not in ("emergency_end", "transfer", "callback"):
         raise ValueError("path must be emergency_end, transfer or callback")
+    if field == "turn_type" and value not in ("backend", "model", "tools"):
+        raise ValueError("turn_type must be backend, model or tools")
     if (
         kind == "call_data_shredded"
         and field == "reason"

@@ -354,7 +354,9 @@ class CallSession:
                 if self._response_id != response_id:
                     return
                 if reminder:
-                    chunks: AsyncIterator[OutputChunk] = self.loop.handle_reminder(self.state)
+                    chunks: AsyncIterator[OutputChunk] = self.loop.handle_reminder(
+                        self.state, response_id=str(response_id)
+                    )
                 elif (
                     utterance is not None
                     and utterance == self._consumed_text
@@ -365,7 +367,9 @@ class CallSession:
                     await self._send_response(response_id, "", complete=True)
                     return
                 else:
-                    chunks = self.loop.handle_caller_turn(self.state, utterance)
+                    chunks = self.loop.handle_caller_turn(
+                        self.state, utterance, response_id=str(response_id)
+                    )
                 await self._stream_chunks(response_id, chunks, interrupt=False)
         except asyncio.CancelledError:
             raise

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -19,7 +20,7 @@ from fastapi import FastAPI, WebSocket
 from retell import AsyncRetell
 
 from core.crypto import InMemoryKeyStore, KeyStore
-from core.events import EventDraft, EventLog, InMemoryEventLog, log_ids
+from core.events import Event, EventDraft, EventLog, InMemoryEventLog, log_ids
 from core.guardrail import load_output_pack
 from core.llm import Model
 from core.numbers import find_numbers
@@ -54,6 +55,7 @@ _ENV_KEYS = frozenset(
         "RETELL_API_KEY",
         "BOOKING_SECRET",
         "PORT",
+        "LATENCY_LOG",
     }
 )
 _CLOSE_POLICY = 1008
@@ -102,6 +104,69 @@ class Settings:
         if len(secret) < 32:
             raise ValueError("BOOKING_SECRET must be at least 32 bytes")
         return cls(ws_token=token, agent_id=agent_id, retell_api_key=api_key, booking_secret=secret)
+
+
+def latency_log_path() -> Path:
+    raw = os.environ.get("LATENCY_LOG", "").strip()
+    if raw:
+        return Path(raw)
+    return ROOT / "data" / "latency.jsonl"
+
+
+class LatencyTap:
+    """Append-only timings sidecar. Survives restart; never holds caller text."""
+
+    def __init__(self, inner: EventLog, path: Path) -> None:
+        self._inner = inner
+        self._path = path
+
+    def __repr__(self) -> str:
+        return f"LatencyTap(path={str(self._path)!r})"
+
+    def __str__(self) -> str:
+        return repr(self)
+
+    async def append(self, draft: EventDraft) -> None:
+        await self._inner.append(draft)
+        if draft.kind != "turn_latency":
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "call_id": draft.call_id,
+            "tenant_id": draft.tenant_id,
+            "at": draft.at.isoformat(),
+            "kind": draft.kind,
+            "payload": draft.payload,
+        }
+        line = json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n"
+        with self._path.open("ab") as handle:
+            handle.write(line.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    async def record_caller_utterance(
+        self,
+        *,
+        call_id: str,
+        tenant_id: str,
+        at: datetime,
+        turn: int,
+        text: str,
+        clinical_class: bool,
+        trip: str | None = None,
+    ) -> str:
+        return await self._inner.record_caller_utterance(
+            call_id=call_id,
+            tenant_id=tenant_id,
+            at=at,
+            turn=turn,
+            text=text,
+            clinical_class=clinical_class,
+            trip=trip,
+        )
+
+    async def read(self, call_id: str | None = None) -> tuple[Event, ...]:
+        return await self._inner.read(call_id)
 
 
 class Runtime:
@@ -156,7 +221,7 @@ class Runtime:
         today = datetime.now(UTC).date()
         tenants = TenantRegistry.load(ROOT / "tenants", today=today)
         keys = InMemoryKeyStore()
-        log = InMemoryEventLog(keys)
+        log: EventLog = LatencyTap(InMemoryEventLog(keys), latency_log_path())
         store = InMemorySessionStore()
         client = AsyncRetell(api_key=settings.retell_api_key)
         lookup: CallLookup = RetellApiLookup(client)
