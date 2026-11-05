@@ -167,6 +167,7 @@ def test_e2e_category_ids() -> None:
         "two_soft_with_gap",
         "duration_mid_booking",
         "live_demo_booking",
+        "unanswered_transfer_then_callback",
     }
     duration = next(case for case in cases if case.id == "duration_mid_booking")
     assert duration.clock_at

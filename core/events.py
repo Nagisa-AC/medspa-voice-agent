@@ -44,6 +44,7 @@ EventKind = Literal[
     "faq_served",
     "escalation_path_chosen",
     "call_data_shredded",
+    "transfer_failed",
 ]
 
 EVENT_KINDS: Final[frozenset[str]] = frozenset(get_args(EventKind))
@@ -91,6 +92,7 @@ PAYLOAD_FIELDS: Final[dict[EventKind, frozenset[str]]] = {
     "faq_served": frozenset({"faq_id"}),
     "escalation_path_chosen": frozenset({"trip", "path", "tier"}),
     "call_data_shredded": frozenset({"reason"}),
+    "transfer_failed": frozenset(),
 }
 
 SENSITIVE_FIELDS: Final[dict[EventKind, frozenset[str]]] = {
@@ -113,6 +115,7 @@ SENSITIVE_FIELDS: Final[dict[EventKind, frozenset[str]]] = {
     "faq_served": frozenset(),
     "escalation_path_chosen": frozenset(),
     "call_data_shredded": frozenset(),
+    "transfer_failed": frozenset(),
 }
 
 OPTIONAL_FIELDS: Final[dict[EventKind, frozenset[str]]] = {
@@ -137,6 +140,7 @@ OPTIONAL_FIELDS: Final[dict[EventKind, frozenset[str]]] = {
     "faq_served": frozenset(),
     "escalation_path_chosen": frozenset({"tier"}),
     "call_data_shredded": frozenset(),
+    "transfer_failed": frozenset(),
 }
 
 

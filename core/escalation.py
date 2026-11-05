@@ -19,6 +19,7 @@ from core.tenant import Tenant
 
 EMERGENCY_LINE = "If this is an emergency, please hang up and call 911 now."
 TRANSFER_LINE = "Let me connect you with the team."
+TRANSFER_FAILED_LINE = "I wasn't able to reach the team. Let me take a callback number instead."
 _WEEKDAYS = (
     "Monday",
     "Tuesday",

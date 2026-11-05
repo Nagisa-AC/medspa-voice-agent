@@ -413,6 +413,8 @@ FIELDS = {
     "caller_number_confirmed",
     "callback_phase",
     "callback_digit_failures",
+    "transfer_sent",
+    "transfer_sent_at",
     "reminder_count",
     "consecutive_blocks",
     "pending_book_slot",

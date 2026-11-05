@@ -10,12 +10,18 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Final, Literal
 
-from core.escalation import EMERGENCY_LINE, TRANSFER_LINE, EscalationPlan, plan
-from core.events import EventDraft, EventKind, EventLog, record_error
+from core.escalation import (
+    EMERGENCY_LINE,
+    TRANSFER_FAILED_LINE,
+    TRANSFER_LINE,
+    EscalationPlan,
+    plan,
+)
+from core.events import EventDraft, EventKind, EventLog, log_ids, record_error
 from core.guardrail import (
     Blocked,
     OutputPack,
@@ -73,6 +79,7 @@ MAX_OUTPUT_TOKENS: Final = 256
 FIRST_TOKEN_TIMEOUT: Final = 2.0
 IDLE_TIMEOUT: Final = 2.0
 MAX_TOOL_ROUNDS: Final = 3
+TRANSFER_GRACE_S: Final = 10
 _MIN_SECRET: Final = 32
 
 HEDGE = "Sorry, I missed that. Could you say it one more time?"
@@ -173,12 +180,17 @@ class TurnLoop:
 
     async def handle_reminder(self, state: CallState) -> AsyncIterator[OutputChunk]:
         session = _Session(self, state)
-        state.reminder_count += 1
-        if state.reminder_count > 2:
-            await session.speak(GOODBYE, "backend", history="include")
-            await session._end("reminder")
+        if session.inside_transfer_grace():
+            session.note_transfer_grace()
+        elif session.transfer_needs_recovery():
+            await session.recover_failed_transfer()
         else:
-            await session.speak(self.tenant.reminder_line, "backend", history="include")
+            state.reminder_count += 1
+            if state.reminder_count > 2:
+                await session.speak(GOODBYE, "backend", history="include")
+                await session._end("reminder")
+            else:
+                await session.speak(self.tenant.reminder_line, "backend", history="include")
         await session.save()
         async for chunk in session.flush():
             yield chunk
@@ -285,9 +297,16 @@ class _Session:
             case Callback():
                 await self.callback_confirm(utterance)
             case Transfer():
-                self.transfer_number = self.state.pending_transfer_number
-                self.interrupt = True
-                await self.speak(TRANSFER_LINE, "backend", history="include")
+                if not self.state.transfer_sent:
+                    await self.send_transfer()
+                    return
+                if self.inside_transfer_grace():
+                    self.note_transfer_grace()
+                    return
+                if self.state.callback_phase == "idle":
+                    await self.recover_failed_transfer()
+                    return
+                await self.callback_confirm(utterance)
             case EmergencyEnd():
                 self.interrupt = True
                 await self.speak(EMERGENCY_LINE, "backend", history="omit")
@@ -300,10 +319,59 @@ class _Session:
                 await self.speak(EMERGENCY_LINE, "backend", history="omit")
                 await self._end("emergency")
             case Transfer():
-                self.transfer_number = self.state.pending_transfer_number
-                await self.speak(TRANSFER_LINE, "backend", history="include")
+                await self.send_transfer()
             case Callback():
                 await self.start_confirm()
+
+    def inside_transfer_grace(self) -> bool:
+        if not self.state.transfer_sent:
+            return False
+        sent_at = self.state.transfer_sent_at
+        if sent_at is None:
+            return False
+        return self.loop.clock() - sent_at <= timedelta(seconds=TRANSFER_GRACE_S)
+
+    def transfer_needs_recovery(self) -> bool:
+        return (
+            isinstance(self.state.escalation, Committed)
+            and isinstance(self.state.escalation.path, Transfer)
+            and self.state.transfer_sent
+            and not self.inside_transfer_grace()
+            and self.state.callback_phase == "idle"
+        )
+
+    def note_transfer_grace(self) -> None:
+        log_ids(
+            "ws_event",
+            call_id=self.state.call_id,
+            tenant_id=self.state.tenant_id,
+            transfer_grace=1,
+        )
+        self.chunks.append(OutputChunk(text="", origin="backend", content_complete=True))
+
+    def mark_transfer_sent(self) -> None:
+        self.state.transfer_sent = True
+        self.state.transfer_sent_at = self.loop.clock()
+
+    async def send_transfer(self) -> None:
+        self.mark_transfer_sent()
+        self.transfer_number = self.state.pending_transfer_number
+        self.interrupt = True
+        await self.speak(TRANSFER_LINE, "backend", history="include")
+
+    async def recover_failed_transfer(self) -> None:
+        await self.loop.log.append(
+            EventDraft(
+                call_id=self.state.call_id,
+                tenant_id=self.state.tenant_id,
+                at=self.loop.clock(),
+                kind="transfer_failed",
+                payload={},
+            )
+        )
+        self.interrupt = True
+        await self.speak(TRANSFER_FAILED_LINE, "backend", history="include")
+        await self.start_confirm()
 
     async def start_confirm(self) -> None:
         if self.state.caller_number:
