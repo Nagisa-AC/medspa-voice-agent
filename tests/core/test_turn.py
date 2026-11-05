@@ -158,6 +158,7 @@ async def setup(
     started: datetime = TUE,
     caller_number: str | None = CALLER,
     now: datetime | None = None,
+    mono: FakeMono | None = None,
 ) -> tuple[TurnLoop, Any, InMemoryEventLog, InMemorySessionStore]:
     keys = InMemoryKeyStore()
     data_key_id = await keys.create("call_1")
@@ -189,6 +190,7 @@ async def setup(
         engine=ENGINE,
         pack=PACK,
         extract=EXTRACT,
+        mono=mono,
     )
     return loop, state, log, store
 
@@ -230,7 +232,7 @@ async def test_connect_speaks_greeting_included() -> None:
 
 async def test_cancelled_caller_turn_restores_transcript() -> None:
     model = ScriptedLLM([CannedTurn(id="slow", delay_s=2, events=(CannedText("hi"), CannedDone()))])
-    loop, state, _log, _store = await setup(model=model)
+    loop, state, log, _store = await setup(model=model)
     loop.first_token_timeout = 5
     loop.idle_timeout = 5
     task = asyncio.create_task(collect(loop.handle_caller_turn(state, "hello there friend")))
@@ -240,6 +242,7 @@ async def test_cancelled_caller_turn_restores_transcript() -> None:
         await task
     assert state.turn_count == 0
     assert not any(isinstance(line, CallerLine) for line in state.transcript)
+    assert "turn_latency" not in await kinds(log)
 
 
 async def test_reminder_speaks_line_then_goodbye() -> None:
@@ -1268,6 +1271,99 @@ async def test_stale_save_hedges() -> None:
     chunks = await collect(loop.handle_caller_turn(state, "hello there friend"))
     assert HEDGE in [chunk.text for chunk in chunks]
     assert "error" in await kinds(log)
+
+
+async def latency_event(log: InMemoryEventLog) -> dict[str, object]:
+    found = [event for event in await log.read("call_1") if event.kind == "turn_latency"]
+    assert len(found) == 1
+    return dict(found[0].payload)
+
+
+def _ms_field(payload: dict[str, object], name: str) -> int:
+    value = payload[name]
+    assert isinstance(value, int)
+    return value
+
+
+async def test_backend_turn_latency_has_no_model_or_tool_fields() -> None:
+    mono = FakeMono()
+    loop, state, log, _store = await setup(model=_scripted(_text("unused", "nope")), mono=mono)
+    await collect(loop.handle_caller_turn(state, IDENTITY))
+    payload = await latency_event(log)
+    assert payload["turn_type"] == "backend"
+    assert payload["t_first_chunk_ms"] == 0
+    assert payload["t_total_ms"] == 0
+    assert payload["response_id"] == "1"
+    assert "t_model_first_token_ms" not in payload
+    assert "t_tool_ms" not in payload
+    dumped = json.dumps({str(key): str(value) for key, value in payload.items()})
+    assert IDENTITY not in dumped
+    assert "bot" not in dumped
+
+
+async def test_model_turn_records_first_token_from_mono() -> None:
+    mono = FakeMono()
+    model = ScriptedLLM(
+        (
+            CannedTurn(
+                id="ok",
+                delay_s=0.05,
+                events=(CannedText("Happy to help."), CannedDone()),
+            ),
+        ),
+        sleep=mono.sleep,
+        clock=mono,
+    )
+    loop, state, log, _store = await setup(model=model, mono=mono)
+    await collect(loop.handle_caller_turn(state, "hello there friend"))
+    payload = await latency_event(log)
+    assert payload["turn_type"] == "model"
+    assert _ms_field(payload, "t_model_first_token_ms") == 50
+    assert _ms_field(payload, "t_first_chunk_ms") == 50
+    assert _ms_field(payload, "t_total_ms") >= 50
+    assert "t_tool_ms" not in payload
+
+
+async def test_tool_turn_records_tool_time() -> None:
+    mono = FakeMono()
+    model = _scripted(
+        _tool("a", "check_availability", {"service_text": "botox"}),
+        mono=mono,
+    )
+    loop, state, log, _store = await setup(model=model, mono=mono)
+    inner = loop.adapter
+    assert isinstance(inner, MockBookingAdapter)
+
+    class SlowAdapter:
+        async def list_availability(self, **kwargs: Any) -> Any:
+            await mono.sleep(0.04)
+            return await inner.list_availability(**kwargs)
+
+        async def create_booking(self, **kwargs: Any) -> Any:
+            return await inner.create_booking(**kwargs)
+
+        async def get_booking(self, booking_id: str) -> Any:
+            return await inner.get_booking(booking_id)
+
+    loop.adapter = SlowAdapter()
+    await collect(loop.handle_caller_turn(state, "when can I come in for botox"))
+    payload = await latency_event(log)
+    assert payload["turn_type"] == "tools"
+    assert _ms_field(payload, "t_tool_ms") == 40
+    first_ms = _ms_field(payload, "t_first_chunk_ms")
+    assert first_ms >= 40
+    assert _ms_field(payload, "t_total_ms") >= first_ms
+
+
+async def test_turn_latency_appended_after_first_chunk() -> None:
+    loop, state, log, _store = await setup(model=_scripted(_text("ok", "Happy to help.")))
+    agen = loop.handle_caller_turn(state, "hello there friend")
+    first = await anext(agen)
+    assert first.text
+    assert "turn_latency" not in await kinds(log)
+    async for _chunk in agen:
+        pass
+    assert (await kinds(log)).count("turn_latency") == 1
 
 
 def test_turn_module_does_not_import_retell() -> None:

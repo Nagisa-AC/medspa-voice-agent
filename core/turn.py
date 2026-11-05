@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -73,7 +74,9 @@ from tools.scheduling import (
 )
 
 Clock = Callable[[], datetime]
+Mono = Callable[[], float]
 Origin = Literal["backend", "model"]
+TurnType = Literal["backend", "model", "tools"]
 
 MAX_OUTPUT_TOKENS: Final = 256
 FIRST_TOKEN_TIMEOUT: Final = 2.0
@@ -129,6 +132,7 @@ class TurnLoop:
         max_output_tokens: int = MAX_OUTPUT_TOKENS,
         first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
         idle_timeout: float = IDLE_TIMEOUT,
+        mono: Mono | None = None,
     ) -> None:
         if len(secret) < _MIN_SECRET:
             raise ValueError("secret must be at least 32 bytes")
@@ -145,6 +149,7 @@ class TurnLoop:
         self.max_output_tokens = max_output_tokens
         self.first_token_timeout = first_token_timeout
         self.idle_timeout = idle_timeout
+        self.mono: Mono = mono if mono is not None else time.monotonic
 
     async def connect(self, state: CallState) -> AsyncIterator[OutputChunk]:
         session = _Session(self, state)
@@ -155,9 +160,14 @@ class TurnLoop:
             yield chunk
 
     async def handle_caller_turn(
-        self, state: CallState, utterance: str
+        self,
+        state: CallState,
+        utterance: str,
+        *,
+        response_id: str | None = None,
     ) -> AsyncIterator[OutputChunk]:
-        session = _Session(self, state)
+        session = _Session(self, state, response_id=response_id)
+        session.begin()
         snap = _snap_turn(state)
         try:
             await session.caller_turn(utterance)
@@ -175,11 +185,14 @@ class TurnLoop:
             )
             await session.speak(HEDGE, "backend", history="include")
         await session.save()
-        async for chunk in session.flush():
+        async for chunk in self._yield_timed(session):
             yield chunk
 
-    async def handle_reminder(self, state: CallState) -> AsyncIterator[OutputChunk]:
-        session = _Session(self, state)
+    async def handle_reminder(
+        self, state: CallState, *, response_id: str | None = None
+    ) -> AsyncIterator[OutputChunk]:
+        session = _Session(self, state, response_id=response_id)
+        session.begin()
         if session.inside_transfer_grace():
             session.note_transfer_grace()
         elif session.transfer_needs_recovery():
@@ -192,7 +205,7 @@ class TurnLoop:
             else:
                 await session.speak(self.tenant.reminder_line, "backend", history="include")
         await session.save()
-        async for chunk in session.flush():
+        async for chunk in self._yield_timed(session):
             yield chunk
 
     async def handle_consumed_response(
@@ -206,6 +219,7 @@ class TurnLoop:
 
     async def handle_mid_turn_update(self, state: CallState, utterance: str) -> OutputChunk | None:
         session = _Session(self, state)
+        session.begin()
         result = await session.record_utterance(utterance)
         if isinstance(state.escalation, Committed):
             await session.replay_committed(utterance)
@@ -217,15 +231,22 @@ class TurnLoop:
             state.record_arm(result.trip)
         await session.save()
         if session.chunks:
-            chunks = [chunk async for chunk in session.flush()]
+            chunks = [chunk async for chunk in self._yield_timed(session)]
             return chunks[-1]
         return None
 
+    async def _yield_timed(self, session: _Session) -> AsyncIterator[OutputChunk]:
+        async for chunk in session.flush():
+            session.mark_first_chunk()
+            yield chunk
+        await session.log_latency()
+
 
 class _Session:
-    def __init__(self, loop: TurnLoop, state: CallState) -> None:
+    def __init__(self, loop: TurnLoop, state: CallState, *, response_id: str | None = None) -> None:
         self.loop = loop
         self.state = state
+        self.response_id = response_id
         self.chunks: list[OutputChunk] = []
         self.end_call = False
         self.transfer_number: str | None = None
@@ -237,6 +258,52 @@ class _Session:
         self.passed_model: list[str] = []
         self.round_payloads: list[tuple[ToolCall, Mapping[str, object]]] = []
         self.ended_in_block = False
+        self.t0: float | None = None
+        self.first_chunk_ms: int | None = None
+        self.model_first_token_ms: int | None = None
+        self.tool_s = 0.0
+        self.guardrail_s = 0.0
+        self.guardrail_ran = False
+        self.model_called = False
+        self.tools_ran = False
+
+    def begin(self) -> None:
+        self.t0 = self.loop.mono()
+
+    def mark_first_chunk(self) -> None:
+        if self.first_chunk_ms is None and self.t0 is not None:
+            self.first_chunk_ms = _ms(self.loop.mono() - self.t0)
+
+    async def log_latency(self) -> None:
+        if self.t0 is None or self.first_chunk_ms is None:
+            return
+        if self.tools_ran:
+            turn_type: TurnType = "tools"
+        elif self.model_called:
+            turn_type = "model"
+        else:
+            turn_type = "backend"
+        payload: dict[str, str | int | bool | list[str]] = {
+            "response_id": self.response_id or str(self.state.turn_count),
+            "turn_type": turn_type,
+            "t_first_chunk_ms": self.first_chunk_ms,
+            "t_total_ms": _ms(self.loop.mono() - self.t0),
+        }
+        if self.model_first_token_ms is not None:
+            payload["t_model_first_token_ms"] = self.model_first_token_ms
+        if self.tools_ran:
+            payload["t_tool_ms"] = _ms(self.tool_s)
+        if self.guardrail_ran:
+            payload["t_guardrail_ms"] = _ms(self.guardrail_s)
+        await self.loop.log.append(
+            EventDraft(
+                call_id=self.state.call_id,
+                tenant_id=self.state.tenant_id,
+                at=self.loop.clock(),
+                kind="turn_latency",
+                payload=payload,
+            )
+        )
 
     async def caller_turn(self, utterance: str) -> None:
         self.ended_in_block = False
@@ -446,6 +513,8 @@ class _Session:
     async def _stream_once(self) -> None:
         self.round_payloads = []
         built = self._prompt()
+        self.model_called = True
+        started = self.loop.mono()
         stream = self.loop.model.stream(
             built.messages,
             built.tools,
@@ -458,6 +527,8 @@ class _Session:
         blocked = False
         try:
             async for event in stream:
+                if self.model_first_token_ms is None and isinstance(event, TextDelta | ToolCall):
+                    self.model_first_token_ms = _ms(self.loop.mono() - started)
                 if isinstance(event, TextDelta):
                     if tools:
                         continue
@@ -503,6 +574,7 @@ class _Session:
     async def _model_sentence(self, sentence: str) -> bool:
         if not sentence.strip():
             return True
+        guard_started = self.loop.mono()
         checked = check_sentence(
             sentence,
             self.loop.pack,
@@ -510,6 +582,8 @@ class _Session:
             allowed_numbers=self.state.allowed_numbers,
             extract=self.loop.extract,
         )
+        self.guardrail_s += self.loop.mono() - guard_started
+        self.guardrail_ran = True
         if isinstance(checked, Pass):
             self.passed_model.append(sentence)
             await self.speak(sentence, "model", history="include")
@@ -553,7 +627,12 @@ class _Session:
             )
         )
         try:
-            result = await self._run_tool(call)
+            tool_started = self.loop.mono()
+            try:
+                result = await self._run_tool(call)
+            finally:
+                self.tool_s += self.loop.mono() - tool_started
+                self.tools_ran = True
         except (KeyError, TypeError, ValueError):
             await self.speak(HEDGE, "backend", history="include")
             return False
@@ -849,6 +928,10 @@ class _Session:
                 payload={"reason": reason},
             )
         )
+
+
+def _ms(seconds: float) -> int:
+    return round(seconds * 1000.0)
 
 
 @dataclass(frozen=True)

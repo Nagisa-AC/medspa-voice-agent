@@ -607,7 +607,12 @@ async def test_turn_latency_schema_accepts_optional_timings(keys: InMemoryKeySto
     await log.append(
         draft(
             kind="turn_latency",
-            payload={"response_id": "r1", "t_first_chunk_ms": 120},
+            payload={
+                "response_id": "r1",
+                "turn_type": "backend",
+                "t_first_chunk_ms": 120,
+                "t_total_ms": 200,
+            },
         )
     )
     events = await log.read()

@@ -318,9 +318,12 @@ async def test_planted_clinical_leak_omits_phrase() -> None:
 
 class _StreamOnCommit(TurnLoop):
     async def handle_caller_turn(
-        self, state: CallState, utterance: str
+        self, state: CallState, utterance: str, *, response_id: str | None = None
     ) -> AsyncIterator[OutputChunk]:
-        chunks = [chunk async for chunk in super().handle_caller_turn(state, utterance)]
+        chunks = [
+            chunk
+            async for chunk in super().handle_caller_turn(state, utterance, response_id=response_id)
+        ]
         if isinstance(state.escalation, Committed):
             stream = self.model.stream(
                 (),
