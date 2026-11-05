@@ -18,7 +18,7 @@ from tools.pricing import QuotePriceResult, format_money, quote_price
 
 D = Decimal
 ROOT = Path(__file__).resolve().parents[2]
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 NOW = datetime(2026, 10, 29, 14, 0, tzinfo=UTC)
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
 SPA = load_tenant_file(

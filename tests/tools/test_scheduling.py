@@ -26,7 +26,7 @@ from tools.scheduling import (
 
 D = Decimal
 ROOT = Path(__file__).resolve().parents[2]
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 NY = ZoneInfo("America/New_York")
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
 _GLOW_WORDS = extra_price_words(GLOW)

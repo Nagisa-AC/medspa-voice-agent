@@ -21,7 +21,7 @@ from core.state import Callback, CallState, EmergencyEnd, NotEscalated, new_call
 from core.tenant import extra_price_words, load_tenant_file
 
 ROOT = Path(__file__).resolve().parents[2]
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 NOW = datetime(2026, 11, 3, 16, 0, tzinfo=UTC)
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
 SPA = load_tenant_file(

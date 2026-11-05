@@ -48,7 +48,7 @@ from integrations.retell import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-TODAY = date(2026, 10, 29)
+TODAY = date(2026, 11, 5)
 NOW = datetime(2026, 11, 3, 11, 0, tzinfo=ZoneInfo("America/New_York"))
 TOKEN = "w" * 32
 AGENT = "agent_glow"
@@ -668,6 +668,25 @@ def test_update_only_with_no_inflight_does_not_record() -> None:
     assert state is not None
     assert caller_lines(state) == []
     assert state.turn_count == 0
+
+
+def test_update_only_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    runtime, _lookup = make_runtime()
+    client = TestClient(create_app(runtime))
+    with client.websocket_connect(ws_url()) as ws:
+        drain_begin(ws)
+        ws.send_json(update_only(FILLER))
+        ws.send_json(SAMPLE_PING)
+        assert ws.receive_json()["response_type"] == "ping_pong"
+    events = [record for record in caplog.records if record.name == "core.events"]
+    assert any(
+        record.levelno == logging.DEBUG and "update_only" in record.getMessage()
+        for record in events
+    )
+    assert not any(
+        record.levelno >= logging.INFO and "update_only" in record.getMessage() for record in events
+    )
 
 
 def test_reminder_then_goodbye() -> None:

@@ -27,7 +27,7 @@ from core.tenant import extra_price_words, load_tenant_file
 
 D = Decimal
 ROOT = Path(__file__).resolve().parents[2]
-GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 10, 29))
+GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 11, 5))
 NOW = datetime(2026, 10, 29, 14, 0, tzinfo=UTC)
 _GLOW_WORDS = extra_price_words(GLOW)
 glow_extract = partial(

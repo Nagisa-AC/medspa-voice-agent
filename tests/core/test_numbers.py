@@ -15,7 +15,7 @@ from core.tenant import load_tenant_file
 
 D = Decimal
 ROOT = Path(__file__).resolve().parents[2]
-GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 10, 29))
+GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 11, 5))
 NOW = datetime(2026, 10, 29, 14, 0, tzinfo=UTC)
 
 

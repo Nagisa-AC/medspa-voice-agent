@@ -35,7 +35,7 @@ from tests.core.test_policy import PATTERN_CASES
 
 ROOT = Path(__file__).resolve().parents[2]
 FIX = Path(__file__).parent / "fixtures"
-TODAY = __import__("datetime").date(2026, 10, 29)
+TODAY = __import__("datetime").date(2026, 11, 5)
 GLOW = load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=TODAY)
 PACK = load_output_pack(ROOT / "packs" / "medspa.output.yaml")
 _WORDS = extra_price_words(GLOW)

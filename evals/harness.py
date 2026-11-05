@@ -7,7 +7,7 @@ import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from functools import cache, partial
 from pathlib import Path
@@ -652,7 +652,7 @@ def _script(case: EvalCase) -> ScriptedLLM:
 def _tenant(name: str) -> Any:
     today = datetime(2026, 10, 29, tzinfo=UTC).date()
     if name == "glow":
-        return load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=today)
+        return load_tenant_file(ROOT / "tenants" / "glow_aesthetics.yaml", today=date(2026, 11, 5))
     return load_tenant_file(
         ROOT / "tests" / "core" / "fixtures" / "tenants" / "test_spa.yaml", today=today
     )
