@@ -294,12 +294,12 @@ def test_second_plan_with_a_different_trip_raises() -> None:
         plan(GLOW, state, HUMAN, TUE)
 
 
-def test_failed_transfer_does_not_compose_a_second_path() -> None:
-    """M2 ring-out must not call plan again; replay here keeps the first path."""
+def test_second_plan_keeps_transfer_path_after_send() -> None:
+    """plan() still does not pick Callback; TurnLoop runs the callback flow after grace."""
     state = fresh()
     first = plan(GLOW, state, HUMAN, TUE)
     replay = plan(GLOW, state, HUMAN, TUE)
-    assert replay.path == first.path
+    assert replay.path == first.path == Transfer(1, DESK)
     assert replay.summary.transfer_attempted is True
     assert replay.summary.category == first.summary.category
 

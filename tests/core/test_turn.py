@@ -15,7 +15,7 @@ import pytest
 
 import core.turn
 from core.crypto import InMemoryKeyStore
-from core.escalation import EMERGENCY_LINE, TRANSFER_LINE
+from core.escalation import EMERGENCY_LINE, TRANSFER_FAILED_LINE, TRANSFER_LINE
 from core.events import InMemoryEventLog
 from core.guardrail import load_output_pack
 from core.llm import (
@@ -48,6 +48,7 @@ from core.turn import (
     GOODBYE,
     HEDGE,
     NUMBER_HEDGE,
+    TRANSFER_GRACE_S,
     TRY_AGAIN,
     WHICH_WORKS,
     OutputChunk,
@@ -88,6 +89,17 @@ class FakeMono:
 
     async def sleep(self, seconds: float) -> None:
         self.now += seconds
+
+
+class FrozenClock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now = self.now + timedelta(seconds=seconds)
 
 
 def _text(turn_id: str, *parts: str) -> CannedTurn:
@@ -160,11 +172,7 @@ async def setup(
     )
     state.caller_number = caller_number
     await store.create(state)
-    clock_now = now if now is not None else started
-
-    def clock() -> datetime:
-        return clock_now
-
+    clock = FrozenClock(now if now is not None else started)
     llm = model if model is not None else _scripted(_text("unused", "ok"))
     loop = TurnLoop(
         GLOW,
@@ -174,7 +182,7 @@ async def setup(
         MockBookingAdapter.from_yaml(
             ROOT / "tenants" / "glow_aesthetics.mock.yaml",
             tz=GLOW.tz,
-            clock=lambda: clock_now,
+            clock=clock,
         ),
         SECRET,
         clock=clock,
@@ -183,6 +191,11 @@ async def setup(
         extract=EXTRACT,
     )
     return loop, state, log, store
+
+
+def clock_of(loop: TurnLoop) -> FrozenClock:
+    assert isinstance(loop.clock, FrozenClock)
+    return loop.clock
 
 
 async def kinds(log: InMemoryEventLog) -> list[str]:
@@ -969,10 +982,76 @@ async def test_transfer_exposes_number_and_sms_once() -> None:
     assert TRANSFER_LINE in [chunk.text for chunk in first]
     assert first[-1].transfer_number == "+12035550101"
     assert first[-1].end_call is False
+    assert state.transfer_sent is True
+    assert state.transfer_sent_at == TUE
     model.assert_never_called()
-    second = await collect(loop.handle_caller_turn(state, "hello again there"))
-    assert second[-1].transfer_number == "+12035550101"
     assert (await kinds(log)).count("sms_logged") == 1
+
+
+async def test_reminder_inside_transfer_grace_is_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO", logger="core.events")
+    model = _scripted(_text("unused", "nope"))
+    loop, state, log, _store = await setup(model=model)
+    await collect(loop.handle_caller_turn(state, "get me a real person"))
+    clock_of(loop).advance(TRANSFER_GRACE_S - 7)
+    chunks = await collect(loop.handle_reminder(state))
+    assert len(chunks) == 1
+    assert chunks[0].text == ""
+    assert chunks[0].content_complete is True
+    assert chunks[0].transfer_number is None
+    assert chunks[0].end_call is False
+    assert TRANSFER_FAILED_LINE not in [chunk.text for chunk in chunks]
+    assert ASK_BEST not in [chunk.text for chunk in chunks]
+    assert (await kinds(log)).count("transfer_failed") == 0
+    assert (await kinds(log)).count("sms_logged") == 1
+    assert "ws_event" in caplog.text
+    assert "transfer_grace=1" in caplog.text
+    assert "call_1" in caplog.text
+    model.assert_never_called()
+
+
+async def test_caller_turn_after_transfer_grace_recovers_once() -> None:
+    model = _scripted(_text("unused", "nope"))
+    loop, state, log, _store = await setup(model=model)
+    first = await collect(loop.handle_caller_turn(state, "get me a real person"))
+    assert first[-1].transfer_number == "+12035550101"
+    clock_of(loop).advance(TRANSFER_GRACE_S + 5)
+    second = await collect(loop.handle_caller_turn(state, "hello again there"))
+    texts = [chunk.text for chunk in second]
+    assert TRANSFER_LINE not in texts
+    assert TRANSFER_FAILED_LINE in texts
+    assert ASK_BEST in texts
+    assert all(chunk.transfer_number is None for chunk in second)
+    assert second[-1].end_call is False
+    assert (await kinds(log)).count("transfer_failed") == 1
+    assert (await kinds(log)).count("sms_logged") == 1
+    third = await collect(loop.handle_caller_turn(state, "yes"))
+    third_texts = [chunk.text for chunk in third]
+    assert TRANSFER_LINE not in third_texts
+    assert TRANSFER_FAILED_LINE not in third_texts
+    assert GLOW.callback_promise in third_texts
+    assert GOODBYE in third_texts
+    assert all(chunk.transfer_number is None for chunk in third)
+    assert third[-1].end_call is True
+    assert (await kinds(log)).count("sms_logged") == 1
+    assert (await kinds(log)).count("transfer_failed") == 1
+    model.assert_never_called()
+
+
+async def test_mid_turn_inside_transfer_grace_is_empty() -> None:
+    model = _scripted(_text("unused", "nope"))
+    loop, state, log, _store = await setup(model=model)
+    await collect(loop.handle_caller_turn(state, "get me a real person"))
+    clock_of(loop).advance(TRANSFER_GRACE_S - 7)
+    chunk = await loop.handle_mid_turn_update(state, "hello again there")
+    assert chunk is not None
+    assert chunk.text == ""
+    assert chunk.content_complete is True
+    assert chunk.transfer_number is None
+    assert (await kinds(log)).count("transfer_failed") == 0
+    model.assert_never_called()
 
 
 # --------------------------------------------------------------------------- callback confirm

@@ -202,6 +202,15 @@ async def test_missing_required_field_fails(keys: InMemoryKeyStore) -> None:
         await log.append(draft(kind="faq_served", payload={}))
 
 
+async def test_transfer_failed_is_id_only(keys: InMemoryKeyStore) -> None:
+    log = InMemoryEventLog(keys)
+    await log.append(draft(kind="transfer_failed", payload={}))
+    events = await log.read()
+    assert events[0].kind == "transfer_failed"
+    assert events[0].payload == {}
+    assert events[0].call_id == "call_1"
+
+
 async def test_naive_datetime_rejected(keys: InMemoryKeyStore) -> None:
     log = InMemoryEventLog(keys)
     with pytest.raises(ValueError, match="timezone-aware"):

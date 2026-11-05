@@ -193,6 +193,8 @@ class CallState:
     caller_number_confirmed: bool = False
     callback_phase: Literal["idle", "ask_best", "ask_digits", "done"] = "idle"
     callback_digit_failures: int = 0
+    transfer_sent: bool = False
+    transfer_sent_at: datetime | None = None
     reminder_count: int = 0
     consecutive_blocks: int = 0
     pending_book_slot: str | None = None
